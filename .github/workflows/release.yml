@@ -1,0 +1,77 @@
+# 옵시디언 플러그인 릴리스 — 공개 미러판 (#326).
+#
+# 모노리포 `plugin-release.yml` 과 같은 게이트 넷을 지난다(태그·버전 대조 → 타입 검사+테스트 →
+# 산출물 검사 → 연기 시험). 차이 둘: ① GitHub 호스티드 러너(공개 리포 — 셀프호스티드를 공개
+# 리포에 붙이지 않는다) ② 마켓이 읽는 릴리스는 **이 리포**의 것이다 — 옵시디언 설치기는 제출된
+# 저장소의 릴리스에서 main.js·manifest.json 을 내려받는다.
+#
+# 태그 꼴은 모노리포와 같은 `x.y.z`(옵시디언이 `v` 접두를 금한다). 초안으로 서고 공개는 사람 손.
+name: Plugin Release
+
+permissions:
+  contents: read
+
+on:
+  push:
+    tags: ["[0-9]+.[0-9]+.[0-9]+"]
+  workflow_dispatch:
+
+jobs:
+  release:
+    name: 플러그인 산출물 + 초안 릴리스
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # gh release create
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: 태그·버전 대조
+        if: github.event_name == 'push'
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF#refs/tags/}"
+          version="$(node -p "require('./packages/plugin/manifest.json').version")"
+          if [ "$tag" != "$version" ]; then
+            echo "태그($tag)와 manifest.version($version)이 다르다 — 옵시디언은 둘이 같기를 요구한다" >&2
+            exit 1
+          fi
+          echo "태그 $tag = manifest.version $version"
+
+      - run: pnpm --filter @ontoflow/plugin typecheck
+      - run: pnpm --filter @ontoflow/plugin test
+
+      - run: pnpm --filter @ontoflow/plugin build
+
+      - name: 산출물 검사
+        run: |
+          set -euo pipefail
+          cd packages/plugin/dist
+          test -f main.js
+          test -f manifest.json
+          grep -q "AGFzbQ" main.js || { echo "번들에 sql.js wasm 이 없다 — 설치 즉시 고장이다" >&2; exit 1; }
+          ! grep -q "sql-wasm.wasm" main.js || { echo "번들이 외부 wasm 파일을 참조한다" >&2; exit 1; }
+          ls -la
+
+      - run: pnpm --filter @ontoflow/plugin smoke
+
+      - name: 초안 릴리스
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF#refs/tags/}"
+          cd packages/plugin/dist
+          assets=(main.js manifest.json)
+          if [ -f styles.css ]; then assets+=(styles.css); fi
+          gh release create "$tag" --title "$tag" --draft \
+            --notes "OntoFlow $tag — download main.js and manifest.json into <vault>/.obsidian/plugins/ontoflow/." \
+            "${assets[@]}"

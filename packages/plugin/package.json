@@ -1,0 +1,23 @@
+{
+  "name": "@ontoflow/plugin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "OntoFlow 옵시디언 플러그인 — @ontoflow/core 조립 (이슈 #42)",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "build": "node esbuild.config.mjs",
+    "smoke": "node scripts/smoke-install.mjs"
+  },
+  "dependencies": {
+    "@ontoflow/core": "workspace:*",
+    "sql.js": "^1.15.2"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "obsidian": "^1.7.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

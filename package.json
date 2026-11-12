@@ -1,0 +1,11 @@
+{
+  "name": "ontoflow-obsidian",
+  "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "typecheck": "pnpm --filter @ontoflow/plugin typecheck",
+    "test": "pnpm --filter @ontoflow/plugin test",
+    "build": "pnpm --filter @ontoflow/plugin build",
+    "smoke": "pnpm --filter @ontoflow/plugin smoke"
+  }
+}

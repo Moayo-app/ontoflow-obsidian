@@ -1,0 +1,10 @@
+{
+  "id": "ontoflow",
+  "name": "OntoFlow",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "쓰고 잊은 노트가 다시 말을 건다 — 모순·공백·잊은 연결의 재부상, 근거 있는 답, 어느 LLM 에나 통하는 당신의 기억. 추출은 자동, 소유는 사용자.",
+  "author": "Moayo",
+  "authorUrl": "https://ontoflow.app",
+  "isDesktopOnly": false
+}
