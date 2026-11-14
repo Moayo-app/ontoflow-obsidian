@@ -127,10 +127,10 @@ export function createAccount(
   now: string,
 ): Account {
   const accountId = id.trim();
-  if (accountId.length === 0) throw new BillingError(422, ["계정 id 가 비어 있다"]);
+  if (accountId.length === 0) throw new BillingError(422, ["계정 id 가 비어 있습니다"]);
   const normalized = normalizeEmail(email);
-  if (normalized === null) throw new BillingError(422, ["계정 이메일이 비어 있다 — 계정의 축이다"]);
-  if (providers.length === 0) throw new BillingError(422, ["로그인 수단이 없는 계정은 서지 않는다"]);
+  if (normalized === null) throw new BillingError(422, ["계정 이메일이 비어 있습니다 — 계정의 축입니다"]);
+  if (providers.length === 0) throw new BillingError(422, ["로그인 수단이 없는 계정은 서지 않습니다"]);
   return {
     id: accountId,
     orgId: `org:${accountId}`,
@@ -183,11 +183,11 @@ export function hasAuthProvider(account: Account, provider: string): boolean {
 export function unlinkAuthProvider(account: Account, provider: string): Account {
   const kept = account.authProviders.filter((p) => p.provider !== provider);
   if (kept.length === account.authProviders.length) {
-    throw new BillingError(404, [`${provider} 는 이 계정에 붙어 있지 않다`]);
+    throw new BillingError(404, [`${provider} 는 이 계정에 붙어 있지 않습니다`]);
   }
   if (kept.length === 0) {
     throw new BillingError(409, [
-      "마지막 로그인 수단은 뗄 수 없다 — 떼면 들어올 문이 0 이 된다. 다른 수단을 먼저 붙인다",
+      "마지막 로그인 수단은 뗄 수 없습니다 — 떼면 들어올 문이 0 이 됩니다. 다른 수단을 먼저 붙여 주세요",
     ]);
   }
   return { ...account, authProviders: kept };
@@ -214,7 +214,7 @@ export const MARKETING_TRANSACTIONAL_BASIS =
 /** 마케팅 수신동의 — opt-in 의 유일한 길: 방법 기록 없는 동의는 서지 않는다 (C3 증빙). */
 export function grantMarketingConsent(account: Account, method: string, now: string): Account {
   if (method.trim().length === 0) {
-    throw new BillingError(422, ["동의 방법 기록이 비어 있다 — 시각·방법이 증빙이다 (C3)"]);
+    throw new BillingError(422, ["동의 방법 기록이 비어 있습니다 — 시각·방법이 증빙입니다"]);
   }
   return { ...account, marketingConsent: { grantedAt: now, method: method.trim() } };
 }
@@ -255,7 +255,7 @@ export interface BillingAuth {
 
 function assertAccountOwner({ authAccountId, accountId }: BillingAuth): void {
   if (authAccountId !== accountId) {
-    throw new BillingError(403, ["남의 계정이다 — 구독·처리·금고 호출은 소유자뿐이다"]);
+    throw new BillingError(403, ["남의 계정입니다 — 구독·처리·금고 호출은 소유자뿐입니다"]);
   }
 }
 
@@ -278,13 +278,13 @@ export function externalCheckout(auth: BillingAuth, polarUrl: string): CheckoutS
   try {
     url = new URL(polarUrl);
   } catch {
-    throw new BillingError(422, [`체크아웃 URL 이 아니다: ${polarUrl}`]);
+    throw new BillingError(422, [`체크아웃 URL 이 아닙니다: ${polarUrl}`]);
   }
   const polarHosted =
     url.protocol === "https:" && (url.hostname === "polar.sh" || url.hostname.endsWith(".polar.sh"));
   if (!polarHosted) {
     throw new BillingError(422, [
-      "외부 체크아웃은 Polar 호스티드(https)뿐이다 — 카드 정보가 우리 표면을 지나지 않는다",
+      "외부 체크아웃은 Polar 호스티드(https)뿐입니다 — 카드 정보가 우리 표면을 지나지 않습니다",
     ]);
   }
   return { accountId: auth.accountId, url: polarUrl };
@@ -415,7 +415,7 @@ export function terminationAccessOf(subscription: Subscription | null, now: stri
 export function assertTerminationOpen(subscription: Subscription | null, now: string): void {
   if (terminationAccessOf(subscription, now) === "closed") {
     throw new BillingError(403, [
-      `이관 창(해지 후 ${String(TERMINATION_EXPORT_WINDOW_DAYS)}일)이 끝나 접근이 닫혔습니다 — 자리 제공 데이터는 창 종료와 함께 삭제 대상입니다 (#211 Q3)`,
+      `이관 창(해지 후 ${String(TERMINATION_EXPORT_WINDOW_DAYS)}일)이 끝나 접근이 닫혔습니다 — 자리 제공 데이터는 창 종료와 함께 삭제 대상입니다`,
     ]);
   }
 }
@@ -599,7 +599,7 @@ export function planOfProduct(products: Readonly<Record<string, PlanId>>, produc
   const plan = products[productId];
   if (plan === undefined) {
     throw new BillingError(422, [
-      `모르는 Polar 상품이다: ${productId} — 요금제 상품 맵(HUB_POLAR_PRODUCT_*)을 확인한다`,
+      `모르는 Polar 상품입니다: ${productId} — 요금제 상품 맵(HUB_POLAR_PRODUCT_*)을 확인해 주세요`,
     ]);
   }
   return plan;
@@ -642,7 +642,7 @@ export function applySubscriptionEvent(
   }
   if (typeof id !== "string" || id.length === 0 || accountId === null) {
     throw new BillingError(422, [
-      "웹훅 데이터에 구독 id·계정 id 가 없다 — 체크아웃 metadata 왕복이 계약이다",
+      "웹훅 데이터에 구독 id·계정 id 가 없습니다 — 체크아웃 metadata 왕복이 계약입니다",
     ]);
   }
   if (event.type === "subscription.canceled" || event.type === "subscription.revoked") {
@@ -683,16 +683,16 @@ async function verifiedWebhookEvent(
   now: string,
 ): Promise<PolarEvent> {
   if (!(await verifyWebhookSignature(secret, headers, payload, now))) {
-    throw new BillingError(401, ["웹훅 서명이 맞지 않는다 — 위조로 보고 상태 변경 0"]);
+    throw new BillingError(401, ["웹훅 서명이 맞지 않습니다 — 위조로 보고 상태 변경 0"]);
   }
   let doc: unknown;
   try {
     doc = JSON.parse(payload);
   } catch (e) {
-    throw new BillingError(422, [`웹훅 본문이 JSON 이 아니다: ${(e as Error).message}`]);
+    throw new BillingError(422, [`웹훅 본문이 JSON 이 아닙니다: ${(e as Error).message}`]);
   }
   if (typeof doc !== "object" || doc === null || typeof (doc as { type?: unknown }).type !== "string") {
-    throw new BillingError(422, ["웹훅 본문에 type 이 없다"]);
+    throw new BillingError(422, ["웹훅 본문에 type 이 없습니다"]);
   }
   return doc as unknown as PolarEvent;
 }
@@ -737,7 +737,7 @@ export function applyPackOrderEvent(event: PolarEvent, now: string): PackWebhook
   const id = data.id;
   const ownerId = accountIdOf(data);
   if (typeof id !== "string" || id.length === 0 || ownerId === null) {
-    throw new BillingError(422, ["팩 주문 웹훅에 주문 id·계정 id 가 없다 — 체크아웃 metadata 왕복이 계약이다"]);
+    throw new BillingError(422, ["팩 주문 웹훅에 주문 id·계정 id 가 없습니다 — 체크아웃 metadata 왕복이 계약입니다"]);
   }
   if (event.type === "order.refunded") return { applied: true, ownerId, refundedPackId: id };
   if (event.type === "order.created") return { applied: true, ownerId, pack: newCreditPack(id, now) };
@@ -766,12 +766,12 @@ export function requestPackRefund(
 ): CreditPack {
   assertAccountOwner(auth);
   const pack = packs.find((p) => p.id === packId);
-  if (pack === undefined) throw new BillingError(404, ["그 팩이 없다"]);
+  if (pack === undefined) throw new BillingError(404, ["그 팩이 없습니다"]);
   if (!packRefundable(pack, now)) {
     throw new BillingError(422, [
       pack.remaining < pack.credits
-        ? "이미 사용한 팩은 환불할 수 없다 — 환불은 미사용 전액뿐이다 (#193 B4)"
-        : `환불 창(구매 후 ${CREDIT_PACK.refundDays}일)이 지났다`,
+        ? "이미 사용한 팩은 환불할 수 없습니다 — 환불은 미사용 전액뿐입니다"
+        : `환불 창(구매 후 ${CREDIT_PACK.refundDays}일)이 지났습니다`,
     ]);
   }
   return pack;
@@ -787,7 +787,7 @@ export function cancelSubscription(
   now: string,
 ): Subscription {
   assertAccountOwner(auth);
-  if (subscription === null) throw new BillingError(404, ["해지할 구독이 없다"]);
+  if (subscription === null) throw new BillingError(404, ["해지할 구독이 없습니다"]);
   return { ...subscription, status: "canceled", updatedAt: now };
 }
 
@@ -805,15 +805,15 @@ export interface PlanChange {
 export function assertPlanChangeEnforceable(change: PlanChange, now: string): void {
   const problems: string[] = [];
   if (change.consent === null) {
-    problems.push("사전 동의가 없다 — 30일 전 동의 없이 시행되지 않는다 (`§13`⑥)");
+    problems.push("사전 동의가 없습니다 — 30일 전 동의 없이 시행되지 않습니다 (`§13`⑥)");
   } else {
     const noticeMs = PLAN_CHANGE_NOTICE_DAYS * 24 * 60 * 60 * 1000;
     if (Date.parse(change.effectiveAt) - Date.parse(change.consent.grantedAt) < noticeMs) {
-      problems.push(`동의가 시행일 ${PLAN_CHANGE_NOTICE_DAYS}일 전을 지나 받혔다 — 시행일을 미룬다`);
+      problems.push(`동의가 시행일 ${PLAN_CHANGE_NOTICE_DAYS}일 전을 지나 받혔습니다 — 시행일을 미룹니다`);
     }
   }
   if (Date.parse(now) < Date.parse(change.effectiveAt)) {
-    problems.push("아직 시행일 전이다");
+    problems.push("아직 시행일 전입니다");
   }
   if (problems.length > 0) throw new BillingError(403, problems);
 }
@@ -964,11 +964,11 @@ export function decideCreditSpend(
   now: string,
 ): ExtractionDecision {
   if (!Array.isArray(request.notes) || request.notes.length === 0) {
-    throw new BillingError(422, ["처리할 노트가 없다"]);
+    throw new BillingError(422, ["처리할 노트가 없습니다"]);
   }
   for (const note of request.notes) {
     if (typeof note.id !== "string" || note.id.trim().length === 0) {
-      throw new BillingError(422, ["노트 식별자가 비어 있다"]);
+      throw new BillingError(422, ["노트 식별자가 비어 있습니다"]);
     }
   }
   const period = monthOf(now);
@@ -981,7 +981,7 @@ export function decideCreditSpend(
       return {
         allowed: false,
         status: 402,
-        reason: "최초 전체 색인은 1회다 — 재색인은 구독 몫이다, 업그레이드한다",
+        reason: "최초 전체 색인은 1회입니다 — 재색인은 구독 몫입니다, 업그레이드해 주세요",
         upgrade: true,
       };
     }
@@ -1011,8 +1011,8 @@ export function decideCreditSpend(
       status: 402,
       reason:
         quota === null
-          ? "크레딧이 부족하다 — 처리는 대기로 쌓인다(유실 0), 팩을 충전한다"
-          : `${plan.name} 월 ${quota}크레딧 지갑 소진 — 처리는 대기로 쌓이고(유실 0), 팩 충전·업그레이드·주기 갱신 뒤 처리된다`,
+          ? "크레딧이 부족합니다 — 처리는 대기로 쌓입니다(유실 0), 팩을 충전해 주세요"
+          : `${plan.name} 월 ${quota}크레딧 지갑 소진 — 처리는 대기로 쌓이고(유실 0), 팩 충전·업그레이드·주기 갱신 뒤 처리됩니다`,
       upgrade: rankOf(plan.id) < rankOf(plan.seatBased ? "team-pro" : "pro"),
       hold: true, // #193 AC5 — 실패가 아니라 대기다
       usage: stamped.usage,
@@ -1055,13 +1055,13 @@ export function decideExtraction(
 ): ExtractionDecision {
   assertAccountOwner(auth);
   if (account.id !== auth.accountId || usage.accountId !== account.id) {
-    throw new BillingError(403, ["계정·집계가 호출자와 어긋난다 — 처리 0"]);
+    throw new BillingError(403, ["계정·집계가 호출자와 어긋납니다 — 처리 0"]);
   }
   if (account.sensitiveConsent === null) {
     return {
       allowed: false,
       status: 403,
-      reason: "`§23` 민감정보 별도 동의 전이다 — 동의가 처리의 선행 조건이다",
+      reason: "`§23` 민감정보 별도 동의 전입니다 — 동의가 처리의 선행 조건입니다",
       upgrade: false,
     };
   }
@@ -1129,31 +1129,31 @@ export function decidePlanSwitch(
 ): PlanSwitch {
   assertAccountOwner(auth);
   if (subscription === null) {
-    throw new BillingError(404, ["구독이 없다 — 먼저 구독한다(체크아웃)"]);
+    throw new BillingError(404, ["구독이 없습니다 — 먼저 구독해 주세요(체크아웃)"]);
   }
   if (subscription.accountId !== auth.accountId) {
-    throw new BillingError(403, ["남의 구독이다 — 변경 0"]);
+    throw new BillingError(403, ["남의 구독입니다 — 변경 0"]);
   }
   const target = planOf(to);
   if (target.id === "free") {
     // ⭐ 「무료로 내려가기」는 변경이 아니라 **해지**다. 한 호출로 완결되는 해지 도구가
     //    이미 있으므로(AC2 · 공정위 고시) 거기로 돌려세운다 — 두 경로가 같은 일을 하면
     //    「해지는 했는데 구독이 남은」 상태가 생긴다.
-    throw new BillingError(422, ["무료 층으로 내려가는 것은 해지다 — 해지를 누른다 (약관 제8조 ②)"]);
+    throw new BillingError(422, ["무료 층으로 내려가는 것은 해지입니다 — 해지를 눌러 주세요 (약관 제8조 ②)"]);
   }
   assertSubscribable(target); // 좌석 축 · 가격 미확정을 여기서 함께 거른다
   if (subscription.status !== "active") {
     throw new BillingError(409, [
       subscription.status === "past_due"
-        ? "결제가 밀린 구독이다 — 결제가 선 뒤에 바꾼다 (밀린 채 올리면 미수금이 는다)"
-        : "해지된 구독이다 — 다시 구독한다",
+        ? "결제가 밀린 구독입니다 — 결제가 선 뒤에 바꿔 주세요 (밀린 채 올리면 미수금이 늡니다)"
+        : "해지된 구독입니다 — 다시 구독해 주세요",
     ]);
   }
   const from = planOfSubscription(subscription).id;
   const fromInterval = intervalOfSubscription(subscription);
   const nextInterval = toInterval ?? fromInterval;
   if (from === target.id && fromInterval === nextInterval) {
-    throw new BillingError(422, [`이미 ${target.name}${fromInterval === "year" ? " 연 결제" : ""}다`]);
+    throw new BillingError(422, [`이미 ${target.name}${fromInterval === "year" ? " 연 결제" : ""}입니다`]);
   }
   // ⭐ 방향은 **연 환산 지출**로 가린다 — 티어와 주기가 한 자에서 비교된다 (#132).
   const direction =

@@ -87,15 +87,15 @@ function parseJudgment(text: string, candidates: ReadonlySet<string>): Judgment 
     throw new HubError(422, [`JSON 오류: ${(e as Error).message}`]);
   }
   if (typeof doc !== "object" || doc === null || Array.isArray(doc)) {
-    throw new HubError(422, ["판정 출력이 객체가 아니다"]);
+    throw new HubError(422, ["판정 출력이 객체가 아닙니다"]);
   }
   const { match, confidence } = doc as Record<string, unknown>;
   const problems: string[] = [];
   if (match !== null && (typeof match !== "string" || !candidates.has(match))) {
-    problems.push(`match 가 후보 밖이다: ${JSON.stringify(match)}`);
+    problems.push(`match 가 후보 밖입니다: ${JSON.stringify(match)}`);
   }
   if (typeof confidence !== "number" || confidence < 0 || confidence > 1) {
-    problems.push(`confidence 가 [0,1] 밖이다: ${JSON.stringify(confidence)}`);
+    problems.push(`confidence 가 [0,1] 밖입니다: ${JSON.stringify(confidence)}`);
   }
   if (problems.length > 0) throw new HubError(422, problems);
   return { match: match as string | null, confidence: confidence as number };

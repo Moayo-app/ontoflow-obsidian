@@ -67,7 +67,7 @@ export function synthesisInputFor(store: GraphStore, sourceId: string): Synthesi
     }),
   );
   if (edges.length === 0) {
-    throw new SynthesisError([`합성할 그래프가 없다 — 소스 「${sourceId}」의 수집 산출이 먼저다`]);
+    throw new SynthesisError([`합성할 그래프가 없습니다 — 소스 「${sourceId}」의 수집 산출이 먼저입니다`]);
   }
   const nodes = [...new Set(edges.flatMap((e) => [e.s, e.o]))].sort();
   return { sourceId, nodes, edges };
@@ -127,17 +127,17 @@ export function decideSynthesis(engineText: string, input: SynthesisInput): Synt
   try {
     parsed = JSON.parse(engineText);
   } catch (e) {
-    throw new SynthesisError([`엔진 출력이 JSON 이 아니다: ${(e as Error).message}`]);
+    throw new SynthesisError([`엔진 출력이 JSON 이 아닙니다: ${(e as Error).message}`]);
   }
   const doc = parsed as { title?: unknown; summary?: unknown; sections?: unknown };
   const problems: string[] = [];
-  if (typeof doc.title !== "string" || doc.title.trim() === "") problems.push("title 이 없다");
-  if (typeof doc.summary !== "string" || doc.summary.trim() === "") problems.push("summary 가 없다");
+  if (typeof doc.title !== "string" || doc.title.trim() === "") problems.push("title 이 없습니다");
+  if (typeof doc.summary !== "string" || doc.summary.trim() === "") problems.push("summary 가 없습니다");
   const sections = Array.isArray(doc.sections) ? (doc.sections as { heading?: unknown; bullets?: unknown }[]) : null;
-  if (sections === null || sections.length === 0) problems.push("sections 가 없다");
+  if (sections === null || sections.length === 0) problems.push("sections 가 없습니다");
   for (const s of sections ?? []) {
     if (typeof s.heading !== "string" || !Array.isArray(s.bullets) || s.bullets.some((b) => typeof b !== "string")) {
-      problems.push("section 꼴이 어긋난다");
+      problems.push("section 꼴이 어긋납니다");
       break;
     }
   }
@@ -190,7 +190,7 @@ export async function loadSynthesisState(io: FileIo, vaultDir: string): Promise<
   try {
     parsed = JSON.parse(text);
   } catch (e) {
-    throw new SynthesisError([`${SYNTHESIS_STATE_FILE} 이 JSON 이 아니다: ${(e as Error).message}`]);
+    throw new SynthesisError([`${SYNTHESIS_STATE_FILE} 이 JSON 이 아닙니다: ${(e as Error).message}`]);
   }
   const state = parsed as SynthesisState;
   if (
@@ -200,7 +200,7 @@ export async function loadSynthesisState(io: FileIo, vaultDir: string): Promise<
     typeof state.notes !== "object" ||
     state.notes === null
   ) {
-    throw new SynthesisError([`${SYNTHESIS_STATE_FILE} 스키마가 맞지 않는다 (기대 ${SYNTHESIS_SCHEMA_VERSION})`]);
+    throw new SynthesisError([`${SYNTHESIS_STATE_FILE} 스키마가 맞지 않습니다 (기대 ${SYNTHESIS_SCHEMA_VERSION})`]);
   }
   return state;
 }
@@ -236,7 +236,7 @@ export async function writeSynthesisNote(
   const existing = await io.readText(`${vaultDir}/${path}`);
   if (existing !== null && !isMachineAuthored(existing)) {
     throw new SynthesisError([
-      `기계 자리의 파일에서 마커가 벗겨져 있다 — 사용자 소유로 승격된 파일은 덮어쓰지 않는다: ${path}`,
+      `기계 자리의 파일에서 마커가 벗겨져 있습니다 — 사용자 소유로 승격된 파일은 덮어쓰지 않습니다: ${path}`,
     ]);
   }
   await io.mkdir(`${vaultDir}/${state.dir}`);
@@ -253,7 +253,7 @@ export async function designateSynthesisDir(
 ): Promise<SynthesisState> {
   const dir = newDir.trim().replace(/^\/+|\/+$/g, "");
   if (dir === "" || dir.startsWith(".") || dir.includes("..")) {
-    throw new SynthesisError([`합성 자리가 될 수 없는 경로다: ${JSON.stringify(newDir)}`]);
+    throw new SynthesisError([`합성 자리가 될 수 없는 경로입니다: ${JSON.stringify(newDir)}`]);
   }
   await io.mkdir(`${vaultDir}/${dir}`);
   const notes: SynthesisState["notes"] = {};

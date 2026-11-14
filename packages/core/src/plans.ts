@@ -50,7 +50,7 @@ export const CREDIT_CHARS = 4000;
 /** 처리량 → 크레딧 — 올림, 최소 1. 큰 파일은 더 들지만 거부·분할 요구는 없다 (#193). */
 export function creditsForChars(chars: number): number {
   if (!Number.isFinite(chars) || chars < 0) {
-    throw new PlanError(422, [`처리량이 수가 아니다: ${String(chars)}`]);
+    throw new PlanError(422, [`처리량이 수가 아닙니다: ${String(chars)}`]);
   }
   return Math.max(1, Math.ceil(chars / CREDIT_CHARS));
 }
@@ -145,8 +145,10 @@ export interface Plan {
    *    고치지 않고 만들기만 한다. 그래서 여기가 대시보드와 같은 값이어야 한다.
    */
   name: string;
-  /** 한 줄 설명 — 사이트 카드와 콘솔이 같은 문장을 쓴다. */
+  /** 한 줄 설명 — 사이트 카드와 콘솔이 같은 문장을 쓴다 (ko). */
   blurb: string;
+  /** 한 줄 설명의 영문 — en 표면(사이트 /en·콘솔 en)이 고른다 (ISSUE-354: ko 단일이던 갭). */
+  blurbEn: string;
   price: PlanPrice;
   /**
    * 월 크레딧 (#193) — `null` = 무제한. 최초 전체 색인은 소비 0 이다 (AC7 · 사용자
@@ -178,7 +180,8 @@ export const PLANS: readonly Plan[] = [
   {
     id: "free",
     name: "Free",
-    blurb: "최초 색인 1회 + 월 30크레딧 + 주간 리포트. 해지해도 계속 쓴다.",
+    blurb: "최초 색인 1회와 월 30크레딧, 주간 리포트 — 기한 없이 무료입니다.",
+    blurbEn: "One initial index, 30 credits a month and a weekly report — free with no time limit.",
     price: { kind: "free" },
     monthlyCredits: FREE_MONTHLY_CREDITS,
     reindex: false,
@@ -189,7 +192,8 @@ export const PLANS: readonly Plan[] = [
   {
     id: "standard",
     name: "Standard",
-    blurb: "월 2,000크레딧과 전체 재색인. 등록부·프롬프트 버전이 올라갈 때 다시 돌린다.",
+    blurb: "월 2,000크레딧과 전체 재색인 — 매일 쓰기에 넉넉한 용량입니다.",
+    blurbEn: "2,000 credits a month and full re-index — room for everyday writing.",
     // 도출 2026-11-03 (#130) → 크레딧 승계 2026-11-06 (#193·#197).
     price: { kind: "set", monthlyUsd: 15 },
     monthlyCredits: 2000,
@@ -201,7 +205,8 @@ export const PLANS: readonly Plan[] = [
   {
     id: "pro",
     name: "Pro",
-    blurb: "크레딧 무제한 + 원격 MCP — 외부 AI 가 당신 그래프에 올라탄다.",
+    blurb: "크레딧 무제한과 원격 MCP — 외부 AI 도구까지 그래프에 연결됩니다.",
+    blurbEn: "Unlimited credits and remote MCP — connect external AI tools to your graph.",
     price: { kind: "set", monthlyUsd: 29 },
     monthlyCredits: null, // 무제한
     reindex: true,
@@ -215,7 +220,8 @@ export const PLANS: readonly Plan[] = [
   {
     id: "team-starter",
     name: "Team Starter",
-    blurb: "멤버 5까지 무료 — 멤버당 월 30크레딧 풀. 일단 공짜로 깔아 본다.",
+    blurb: "멤버 5명까지 무료 — 크레딧은 워크스페이스가 함께 씁니다.",
+    blurbEn: "Free for up to 5 members — credits are pooled across the workspace.",
     price: { kind: "free" }, // ⭕ 조직의 바닥이 생겼다 (#197 — 옛 「조직 무료 층 없음」 개정)
     monthlyCredits: FREE_MONTHLY_CREDITS,
     reindex: false,
@@ -226,7 +232,8 @@ export const PLANS: readonly Plan[] = [
   {
     id: "team-standard",
     name: "Team Standard",
-    blurb: "멤버당 월 2,000크레딧 풀 + SSO·SCIM. 유료 전환 시 전 멤버 과금이다.",
+    blurb: "멤버당 월 2,000크레딧 풀에 SSO·SCIM 을 더합니다.",
+    blurbEn: "A pool of 2,000 credits per member a month, plus SSO and SCIM.",
     price: { kind: "set", monthlyUsd: 20 },
     monthlyCredits: 2000,
     reindex: true,
@@ -237,7 +244,8 @@ export const PLANS: readonly Plan[] = [
   {
     id: "team-pro",
     name: "Team Pro",
-    blurb: "크레딧 무제한 + 원격 MCP + SSO·SCIM.",
+    blurb: "크레딧 무제한, 원격 MCP, SSO·SCIM — 모든 기능이 포함됩니다.",
+    blurbEn: "Unlimited credits, remote MCP, SSO and SCIM — everything included.",
     price: { kind: "set", monthlyUsd: 40 },
     monthlyCredits: null,
     reindex: true,
@@ -256,7 +264,7 @@ export function isPlanId(id: string): id is PlanId {
 /** 모르는 id 는 **추측하지 않는다** — 닫힌 기본으로 422 다. */
 export function planOf(id: string): Plan {
   const plan = BY_ID.get(id as PlanId);
-  if (plan === undefined) throw new PlanError(422, [`모르는 요금제다: ${id}`]);
+  if (plan === undefined) throw new PlanError(422, [`모르는 요금제입니다: ${id}`]);
   return plan;
 }
 
@@ -284,13 +292,13 @@ export function assertSubscribable(plan: Plan): void {
   if (!plan.subscribable) {
     throw new PlanError(422, [
       plan.id === "free"
-        ? "무료 층은 구독 대상이 아니다 — 해지하면 그 자리로 돌아간다 (약관 제8조 ②)"
-        : `${plan.name} 은 좌석 과금이라 개인 구독 경로가 아니다 — 조직을 만들어 좌석을 늘린다`,
+        ? "무료 층은 구독 대상이 아닙니다 — 해지하면 그 자리로 돌아갑니다 (약관 제8조 ②)"
+        : `${plan.name} 은 좌석 과금이라 개인 구독 경로가 아닙니다 — 워크스페이스를 만들어 좌석을 늘려 주세요`,
     ]);
   }
   if (!priceIsSet(plan)) {
     // 닫힌 기본 — 값이 박히기 전에는 팔 수 없다 (#130 ⑵ 판정).
-    throw new PlanError(503, [`${plan.name} 의 가격이 아직 확정되지 않았다 — 준비 중이다`]);
+    throw new PlanError(503, [`${plan.name} 의 가격이 아직 확정되지 않았습니다 — 준비 중입니다`]);
   }
 }
 
@@ -301,7 +309,7 @@ export function quotaOf(plan: Plan): number | null {
 
 /** 워크스페이스 풀 — 멤버당 크레딧 × 멤버 수 (#197 「좌석당 N 풀」). 무제한은 그대로다. */
 export function teamPoolOf(plan: Plan, seats: number): number | null {
-  if (!plan.seatBased) throw new PlanError(422, [`${plan.name} 은 워크스페이스 플랜이 아니다`]);
-  if (!Number.isInteger(seats) || seats < 1) throw new PlanError(422, [`멤버 수가 양의 정수가 아니다: ${seats}`]);
+  if (!plan.seatBased) throw new PlanError(422, [`${plan.name} 은 워크스페이스 플랜이 아닙니다`]);
+  if (!Number.isInteger(seats) || seats < 1) throw new PlanError(422, [`멤버 수가 양의 정수가 아닙니다: ${seats}`]);
   return plan.monthlyCredits === null ? null : plan.monthlyCredits * seats;
 }

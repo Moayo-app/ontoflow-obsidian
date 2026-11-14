@@ -48,13 +48,13 @@ export interface Engine {
 export function assertEngineContract(call: Record<string, unknown>): asserts call is EngineCall & Record<string, unknown> {
   const problems: string[] = [];
   if (call.think !== false) {
-    problems.push(`think 는 명시적 false 여야 한다 (현재: ${JSON.stringify(call.think)})`);
+    problems.push(`think 는 명시적 false 여야 합니다 (현재: ${JSON.stringify(call.think)})`);
   }
   if (call.temperature !== 0) {
-    problems.push(`temperature 는 0 이어야 한다 (현재: ${JSON.stringify(call.temperature)})`);
+    problems.push(`temperature 는 0 이어야 합니다 (현재: ${JSON.stringify(call.temperature)})`);
   }
   if (typeof call.schema !== "object" || call.schema === null) {
-    problems.push("output json_schema 가 없다 — 스키마 강제가 계약이다");
+    problems.push("output json_schema 가 없습니다 — 스키마 강제가 계약입니다");
   }
   if (problems.length > 0) throw new HubError(400, problems);
 }
@@ -178,7 +178,7 @@ export function parseEngineOutput(text: string, registry: Registry): EngineOutpu
     throw new HubError(422, [`JSON 오류: ${(e as Error).message}`]);
   }
   if (typeof doc !== "object" || doc === null || Array.isArray(doc)) {
-    throw new HubError(422, ["출력 최상위가 객체가 아니다"]);
+    throw new HubError(422, ["출력 최상위가 객체가 아닙니다"]);
   }
   const raw = doc as Record<string, unknown>;
   const verbs = new Set(verbEnum(registry));
@@ -186,26 +186,26 @@ export function parseEngineOutput(text: string, registry: Registry): EngineOutpu
 
   const edges: RawEdge[] = [];
   if (!Array.isArray(raw.edges)) {
-    problems.push("edges 가 배열이 아니다");
+    problems.push("edges 가 배열이 아닙니다");
   } else {
     raw.edges.forEach((e: unknown, i: number) => {
       if (typeof e !== "object" || e === null) {
-        problems.push(`edges[${i}] 가 객체가 아니다`);
+        problems.push(`edges[${i}] 가 객체가 아닙니다`);
         return;
       }
       const { s, v, o, confidence, fallback } = e as Record<string, unknown>;
-      if (typeof s !== "string" || s.trim().length === 0) problems.push(`edges[${i}].s 가 비어 있다`);
-      if (typeof o !== "string" || o.trim().length === 0) problems.push(`edges[${i}].o 가 비어 있다`);
+      if (typeof s !== "string" || s.trim().length === 0) problems.push(`edges[${i}].s 가 비어 있습니다`);
+      if (typeof o !== "string" || o.trim().length === 0) problems.push(`edges[${i}].o 가 비어 있습니다`);
       if (typeof v !== "string" || !verbs.has(v)) {
-        problems.push(`edges[${i}].v 가 등록부 밖이다: ${JSON.stringify(v)} — 자유 문자열 동사 0 (AC2)`);
+        problems.push(`edges[${i}].v 가 등록부 밖입니다: ${JSON.stringify(v)} — 자유 문자열 동사 0`);
       }
       if (typeof confidence !== "number" || confidence < 0 || confidence > 1) {
-        problems.push(`edges[${i}].confidence 가 [0,1] 밖이다: ${JSON.stringify(confidence)}`);
+        problems.push(`edges[${i}].confidence 가 [0,1] 밖입니다: ${JSON.stringify(confidence)}`);
       }
       if (typeof fallback !== "boolean") {
-        problems.push(`edges[${i}].fallback 이 불리언이 아니다`);
+        problems.push(`edges[${i}].fallback 이 불리언이 아닙니다`);
       } else if (fallback && v !== FALLBACK_VERB_ID) {
-        problems.push(`edges[${i}] 폴백 표시는 ${FALLBACK_VERB_ID} 에만 선다 (현재 동사: ${JSON.stringify(v)})`);
+        problems.push(`edges[${i}] 폴백 표시는 ${FALLBACK_VERB_ID} 에만 섭니다 (현재 동사: ${JSON.stringify(v)})`);
       }
       if (
         typeof s === "string" && s.trim().length > 0 &&
@@ -223,11 +223,11 @@ export function parseEngineOutput(text: string, registry: Registry): EngineOutpu
 
   const retracts: RawRetract[] = [];
   if (!Array.isArray(raw.retracts)) {
-    problems.push("retracts 가 배열이 아니다");
+    problems.push("retracts 가 배열이 아닙니다");
   } else {
     raw.retracts.forEach((r: unknown, i: number) => {
       if (typeof r !== "object" || r === null) {
-        problems.push(`retracts[${i}] 가 객체가 아니다`);
+        problems.push(`retracts[${i}] 가 객체가 아닙니다`);
         return;
       }
       const { s, v, o } = r as Record<string, unknown>;
@@ -238,25 +238,25 @@ export function parseEngineOutput(text: string, registry: Registry): EngineOutpu
       ) {
         retracts.push({ s: s.trim(), v, o: o.trim() });
       } else {
-        problems.push(`retracts[${i}] 가 {s, v∈등록부, o} 계약을 어긴다`);
+        problems.push(`retracts[${i}] 가 {s, v∈등록부, o} 계약을 어깁니다`);
       }
     });
   }
 
   const proposals: RawProposal[] = [];
   if (!Array.isArray(raw.proposals)) {
-    problems.push("proposals 가 배열이 아니다");
+    problems.push("proposals 가 배열이 아닙니다");
   } else {
     raw.proposals.forEach((p: unknown, i: number) => {
       if (typeof p !== "object" || p === null) {
-        problems.push(`proposals[${i}] 가 객체가 아니다`);
+        problems.push(`proposals[${i}] 가 객체가 아닙니다`);
         return;
       }
       const { verbRaw, superclass } = p as Record<string, unknown>;
       if (typeof verbRaw === "string" && verbRaw.trim().length > 0 && isSuperclass(superclass)) {
         proposals.push({ verbRaw: verbRaw.trim(), superclass });
       } else {
-        problems.push(`proposals[${i}] 가 {verbRaw, superclass∈상위분류} 계약을 어긴다`);
+        problems.push(`proposals[${i}] 가 {verbRaw, superclass∈상위분류} 계약을 어깁니다`);
       }
     });
   }
@@ -437,9 +437,9 @@ export interface IncrementalResponse {
 function validateRegistry(registry: Registry | undefined): asserts registry is Registry {
   const problems: string[] = [];
   if (!registry || !Array.isArray(registry.verbs) || registry.verbs.length === 0) {
-    problems.push("등록부가 실리지 않았다 — 허브는 무상태라 요청마다 실려야 한다");
+    problems.push("등록부가 실리지 않았습니다 — 허브는 무상태라 요청마다 실려야 합니다");
   } else if (!registry.verbs.some((v) => v.id === FALLBACK_VERB_ID)) {
-    problems.push(`등록부에 폴백 동사 ${FALLBACK_VERB_ID} 가 없다 — 폴백이 내려앉을 자리가 없다`);
+    problems.push(`등록부에 폴백 동사 ${FALLBACK_VERB_ID} 가 없습니다 — 폴백이 내려앉을 자리가 없습니다`);
   }
   if (problems.length > 0) throw new HubError(400, problems);
 }

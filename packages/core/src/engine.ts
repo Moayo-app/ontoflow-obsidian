@@ -19,7 +19,7 @@ export interface OpenAiCompatConfig {
 
 export function openAiCompatEngine(config: OpenAiCompatConfig, fetchFn: EngineFetchLike): Engine {
   if (config.baseUrl.trim().length === 0) {
-    throw new HubError(400, ["추출 엔진 주소가 비어 있다"]);
+    throw new HubError(400, ["추출 엔진 주소가 비어 있습니다"]);
   }
   const base = config.baseUrl.replace(/\/$/, "");
   const model = config.model ?? null;
@@ -51,18 +51,18 @@ export function openAiCompatEngine(config: OpenAiCompatConfig, fetchFn: EngineFe
         res = await fetchFn(`${base}/v1/chat/completions`, { method: "POST", headers, body });
       } catch (e) {
         // 원인 문구는 싣지 않는다 — 주소·본문이 섞일 수 있다. 종류만. (engine 거절과 같은 자세)
-        throw new HubError(502, [`추출 엔진에 닿지 못했다 (${(e as Error).name})`]);
+        throw new HubError(502, [`추출 엔진에 닿지 못했습니다 (${(e as Error).name})`]);
       }
       if (!res.ok) {
         // 엔진 거절 본문은 싣지 않는다 — 상태만. 호출 측(코어)이 노트 단위 보류로 다룬다.
-        throw new HubError(502, [`추출 엔진이 ${res.status} 로 거절했다`]);
+        throw new HubError(502, [`추출 엔진이 ${res.status} 로 거절했습니다`]);
       }
       const doc = JSON.parse(await res.text()) as {
         choices?: { message?: { content?: unknown } }[];
       };
       const content = doc.choices?.[0]?.message?.content;
       if (typeof content !== "string") {
-        throw new HubError(502, ["추출 엔진 응답에 본문이 없다"]);
+        throw new HubError(502, ["추출 엔진 응답에 본문이 없습니다"]);
       }
       return content;
     },
