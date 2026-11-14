@@ -9,6 +9,24 @@ export type Superclass = (typeof SUPERCLASSES)[number];
 // 등록부 밖 관계가 내려앉는 폴백 자리 — 제거 불가.
 export const FALLBACK_VERB_ID = "related-to";
 
+/**
+ * 동사 id 꼴 (ISSUE-360) — kebab 식별자. 지표 신호의 ID_SHAPE(retention — `[A-Za-z0-9_.:-]`)의
+ * 부분집합이라, 등록부를 통과한 id 는 과금 커밋 뒤의 지표 기록에서 결코 던지지 않는다
+ * (그 던짐이 「크레딧은 빠지고 엣지는 유실, 같은 노트 영구 반복」이었다). 원문·한글은 label 의
+ * 자리다 — 동사 원문 보존(moayo-hq#271)은 id 가 아니라 label·verbRaw 가 진다.
+ */
+export const VERB_ID_SHAPE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+/** 라벨·원문 → id 제안 (ISSUE-360) — ASCII 로 눕힌 kebab. 한글 원문처럼 남는 게 없으면 빈 문자열. */
+export function suggestVerbId(raw: string): string {
+  return raw
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64)
+    .replace(/-+$/g, "");
+}
+
 // 같은 미등록 관계 후보가 이 횟수 이상 관측되면 제안으로 승격된다 (스펙 AC21).
 export const PROPOSAL_THRESHOLD = 2;
 
@@ -85,6 +103,10 @@ function validate(doc: unknown): Registry {
       if (typeof id !== "string" || id.length === 0) {
         problems.push(`verbs[${i}].id 가 비어 있다`);
         return;
+      }
+      if (!VERB_ID_SHAPE.test(id)) {
+        // 꼴 강제 (ISSUE-360) — 사용자 0명 시점 추가라 마이그레이션 0: 꼴 밖 id 는 명시 거부다.
+        problems.push(`verbs[${i}].id 는 kebab 식별자 꼴이어야 한다 (${VERB_ID_SHAPE}): "${id}" — 원문·한글은 label 의 자리다`);
       }
       if (seen.has(id)) problems.push(`중복 id: ${id}`);
       seen.add(id);
@@ -213,8 +235,12 @@ export function confirmProposal(
   if (!isSuperclass(verb.superclass)) {
     throw new RegistryError([`미지 상위분류다: ${JSON.stringify(verb.superclass)}`]);
   }
-  if (verb.id.length === 0 || verb.label.length === 0) {
-    throw new RegistryError(["동사 id·label 은 비어 있을 수 없다"]);
+  if (!VERB_ID_SHAPE.test(verb.id)) {
+    // AI 제안 확정 경로 포함 (ISSUE-360) — suggestVerbId(라벨→kebab)가 기본값을 깔아 준다.
+    throw new RegistryError([`동사 id 는 kebab 식별자 꼴이어야 한다 (${VERB_ID_SHAPE}): "${verb.id}" — 원문·한글은 label 의 자리다`]);
+  }
+  if (verb.label.length === 0) {
+    throw new RegistryError(["동사 label 은 비어 있을 수 없다"]);
   }
   return {
     registry: {

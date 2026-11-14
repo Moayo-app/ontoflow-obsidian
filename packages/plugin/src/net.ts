@@ -22,7 +22,7 @@ export interface NetResponse {
  */
 export async function obsidianFetch(
   url: string,
-  init: { method: string; headers: Record<string, string>; body: string },
+  init: { method: string; headers: Record<string, string>; body?: string },
 ): Promise<NetResponse> {
   const res = await requestUrl({
     url,

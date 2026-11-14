@@ -156,7 +156,7 @@ export async function runSynthesis(
   hub: HubClient,
   sourceId: string,
   now: string,
-): Promise<{ path: string }> {
+): Promise<{ path: string; title: string; md: string }> {
   const onboarding = await loadOnboarding(io, vaultDir);
   if (onboarding.consent === null) {
     throw new OnboardingError(["`§23` 별도 동의 전이다 — 합성도 추출 처리의 연장이다 (AC5)"]);
@@ -166,7 +166,8 @@ export async function runSynthesis(
   const state = await loadSynthesisState(io, vaultDir);
   const written = await writeSynthesisNote(io, vaultDir, state, sourceId, note, now);
   await saveSynthesisState(io, vaultDir, written.state);
-  return { path: written.path };
+  // 출고 표면 (ISSUE-372) — 호출자가 API 목적지(synthesizeTo)로 이어 보낼 수 있게 내용도 돌려준다.
+  return { path: written.path, title: note.title, md: note.md };
 }
 
 // PG 수집함 비우기 (#81) — 원격 MCP 캡처분이 vault 수집함(md)으로 내려와 다음 수집에 합류한다.
@@ -279,6 +280,11 @@ export interface HubDispatch {
   /** 정규화 산출 반영분 — 별칭 박제 수·S2 병합 제안 수 (#47). */
   aliasesRecorded: number;
   mergesQueued: number;
+  /**
+   * 거래 고지 (ISSUE-362 — #193 AC12 의 「API 응답」 채널): 서버가 200 에 실어 보낸
+   * usage-80·usage-100 꼴. 호출자(플러그인 main)가 Notice 로 세운다 — 버리면 고지 의무 반쪽이다.
+   */
+  notices: string[];
 }
 
 // 허브 정규화 산출의 정본 반영 — 별칭은 박제, 임계 미만 제안은 S2 로. 별칭이 그새 다른
@@ -345,7 +351,7 @@ export async function sendToHub(
     .filter((c): c is CollectedChange & { diff: string } => c.diff !== null)
     .map((c) => ({ note: c.note, diff: c.diff }));
   if (diffs.length === 0) {
-    return { patch: zeroPatch(), held: [], verbObservations: 0, aliasesRecorded: 0, mergesQueued: 0 };
+    return { patch: zeroPatch(), held: [], verbObservations: 0, aliasesRecorded: 0, mergesQueued: 0, notices: [] };
   }
   // 문맥 = 이 노트 출처의 기존 엣지 (projectionDataFor 의 모든 엣지는 (s ?? node) -[v]-> to 꼴이다).
   const context: ContextEdge[] = diffs.flatMap(({ note }) => {
@@ -368,7 +374,15 @@ export async function sendToHub(
     await saveReviewQueue(io, vaultDir, observeVerbs(queue, res.proposals));
   }
   const normalized = await applyNormalization(io, vaultDir, store, res.aliases, res.merges);
-  return { patch, held: res.held, verbObservations: res.proposals.length, ...normalized };
+  // 고지 운반 (ISSUE-362) — 응답 타입 밖의 동반 필드다(BYO 로컬 추출은 지갑이 없어 늘 빈 목록).
+  const notices = (res as { notices?: unknown }).notices;
+  return {
+    patch,
+    held: res.held,
+    verbObservations: res.proposals.length,
+    ...normalized,
+    notices: Array.isArray(notices) ? notices.filter((n): n is string => typeof n === "string") : [],
+  };
 }
 
 // ---- 오프라인 보류 (#12 AC5) — 추출 몫만 쌓는다: 로컬 효과는 applyLocal 이 이미 반영했다 ----

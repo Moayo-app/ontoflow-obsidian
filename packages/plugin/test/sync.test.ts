@@ -57,6 +57,27 @@ const noSynthesis = {
   canonicalDrainInbox: async (): Promise<never> => {
     throw new Error("이 테스트는 PG 수집함을 부르지 않는다");
   },
+  workspaceLoad: async (): Promise<never> => {
+    throw new Error("이 테스트는 워크스페이스 투영을 부르지 않는다");
+  },
+  workspaceFlush: async (): Promise<never> => {
+    throw new Error("이 테스트는 워크스페이스 투영을 부르지 않는다");
+  },
+  ingestSources: async (): Promise<never> => {
+    throw new Error("이 테스트는 API 소스 수집을 부르지 않는다");
+  },
+  ingestPull: async (): Promise<never> => {
+    throw new Error("이 테스트는 API 소스 수집을 부르지 않는다");
+  },
+  listWorkspaces: async (): Promise<never> => {
+    throw new Error("이 테스트는 워크스페이스 목록을 부르지 않는다");
+  },
+  ping: async (): Promise<never> => {
+    throw new Error("이 테스트는 연결 확인을 부르지 않는다");
+  },
+  projectTo: async (): Promise<never> => {
+    throw new Error("이 테스트는 동기화 집행을 부르지 않는다");
+  },
 };
 
 const deadHub: HubClient = {
@@ -516,5 +537,33 @@ describe("PG 수집함 드레인 (#81)", () => {
     expect(written[0]).toBe(`${PLUGIN_VAULT_DIR}/ontoflow-inbox/회의록.md`);
     expect(await io.readText(written[0]!)).toBe("# 결정");
     expect(written[1]).not.toContain(".."); // 제목 소독 — 수집함 밖 쓰기 0 (#75 AC6 재사용)
+  });
+});
+
+// 거래 고지 운반 (ISSUE-362) — 서버 200 의 notices 가 HubDispatch 로 실려 플러그인 Notice 채널에
+// 닿는다: #193 AC12 「API 응답」 채널의 복구다 (버리면 고지 의무 반쪽).
+describe("거래 고지 운반 (ISSUE-362)", () => {
+  it("응답의 notices 가 dispatch 로 실리고, 없으면 빈 목록이다", async () => {
+    const { io, store, registry } = await openTestVault();
+    await grantAll(io);
+    const hub = {
+      ...noSynthesis,
+      extractIncremental: async () => ({
+        add: [],
+        retract: [],
+        proposals: [],
+        held: [],
+        aliases: [],
+        merges: [],
+        notices: ["usage-80"],
+      }),
+      extractReindex: async (): Promise<never> => {
+        throw new Error("이 테스트는 재색인을 부르지 않는다");
+      },
+    } as unknown as HubClient;
+    const dispatch = await sendToHub(io, PLUGIN_VAULT_DIR, store, registry, hub, [
+      { kind: "write", note: "a.md", diff: "@@\n+한 줄." },
+    ] as never);
+    expect(dispatch.notices).toEqual(["usage-80"]);
   });
 });

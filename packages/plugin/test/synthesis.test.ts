@@ -48,6 +48,27 @@ function synthesisHub(calls: { count: number }): HubClient {
     canonicalDrainInbox: async (): Promise<never> => {
       throw new Error("이 테스트는 PG 수집함을 부르지 않는다");
     },
+    workspaceLoad: async (): Promise<never> => {
+      throw new Error("이 테스트는 워크스페이스 투영을 부르지 않는다");
+    },
+    workspaceFlush: async (): Promise<never> => {
+      throw new Error("이 테스트는 워크스페이스 투영을 부르지 않는다");
+    },
+    ingestSources: async (): Promise<never> => {
+      throw new Error("이 테스트는 API 소스 수집을 부르지 않는다");
+    },
+    ingestPull: async (): Promise<never> => {
+      throw new Error("이 테스트는 API 소스 수집을 부르지 않는다");
+    },
+    listWorkspaces: async (): Promise<never> => {
+      throw new Error("이 테스트는 워크스페이스 목록을 부르지 않는다");
+    },
+    ping: async (): Promise<never> => {
+      throw new Error("이 테스트는 연결 확인을 부르지 않는다");
+    },
+    projectTo: async (): Promise<never> => {
+      throw new Error("이 테스트는 동기화 집행을 부르지 않는다");
+    },
   };
 }
 

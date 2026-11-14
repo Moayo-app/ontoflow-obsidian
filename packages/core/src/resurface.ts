@@ -321,7 +321,7 @@ export function renderResurfaceReport(input: ResurfaceReportInput): string | nul
   }
   if (input.contradictions.length > 0) {
     lines.push("");
-    lines.push(`## 모순 — 판정 대기 ${input.contradictions.length}`);
+    lines.push(`## 모순 — 확인 대기 ${input.contradictions.length}`); // 콘솔 리포트 헤딩과 한 단어 (ISSUE-368)
     lines.push("");
     for (const f of input.contradictions) lines.push(`- ${f.summary}`);
   }
@@ -334,8 +334,8 @@ export function renderResurfaceReport(input: ResurfaceReportInput): string | nul
   lines.push("");
   lines.push(
     input.newlyQueued > 0
-      ? `> 검토함에 새 판정 대기 ${input.newlyQueued}건이 섰다 — 해소는 기계가 하지 않는다, 판정은 당신 몫이다.`
-      : "> 새 판정 대기는 없다.",
+      ? `> 검토함에 새 확인 대기 ${input.newlyQueued}건이 섰습니다 — 해소는 기계가 하지 않습니다, 판정은 당신 몫입니다.`
+      : "> 새 확인 대기는 없습니다.",
   );
   return lines.join("\n");
 }

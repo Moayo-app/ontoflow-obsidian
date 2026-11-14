@@ -6,6 +6,7 @@
 // 잎 타입 모듈에서 직접 문다 (#326) — 금고·검증 모듈을 타입으로 물면 공개 미러의 전이
 // 폐쇄가 서버 모듈을 끌고 온다.
 import type { Destination } from "./destination.js";
+import type { HubApiKey } from "./api-keys.js";
 import type { Passkey } from "./passkey.js";
 import {
   CREDIT_PACK,
@@ -81,6 +82,12 @@ export interface Account {
    * 옛 레코드에는 이 칸이 없을 수 있다(사용자 0명 시점 추가라 마이그레이션 0).
    */
   passkeys?: readonly Passkey[];
+  /**
+   * 허브 API 키 (ISSUE-363) — 장수 기계 자격: 평문은 발급 응답 한 번뿐이고 여기는 해시만
+   * 산다. 처리면 허용 목록만 지난다(`api-keys.ts`) — 계정 자격을 갈음하지 않는다.
+   * 옛 레코드에는 이 칸이 없을 수 있다(사용자 0명 시점 추가라 마이그레이션 0).
+   */
+  apiKeys?: readonly HubApiKey[];
   createdAt: string;
   /** `§23` 민감정보 별도 동의 — 가입과 분리된 단계(S4)다. null = 미동의 = 처리 0 (AC4).
    * version 없음 = 구 문안(v1 — 외부 소스 수집 미포함, #60 재동의 게이트의 분모). */
@@ -105,6 +112,14 @@ export interface Account {
    * `hosted` 와 같은 결 — ISSUE-242 AC7). 표식의 생애는 `seat.ts` 가 든다.
    */
   hostedSeat?: { provisionedAt: string } | null;
+  /**
+   * 이메일 축이 처음 인증된 시각 (ISSUE-358) — 칸 부재·null = 한 번도 인증된 적 없음.
+   * 인증된 세션이 처음 닿을 때 한 번 찍히고 불변이다. 도장 없는 계정에 인증된 토큰이
+   * 이메일 병합으로 닿으면 축의 주인이 그 토큰으로 확정되어 낯선 uid 의 문·패스키가
+   * 걷힌다(심어 둔 계정 차단 — `auth.ts` 2단계). 옛 레코드의 칸 부재는 주인의 첫 인증
+   * 세션에서 자연 보정된다(마이그레이션 0).
+   */
+  emailVerifiedAt?: string | null;
 }
 
 /**
@@ -894,11 +909,20 @@ function consumePacks(packs: readonly CreditPack[], amount: number, now: string)
     });
 }
 
-export type ExtractionKind = "initial-index" | "incremental";
+/**
+ * 소비처 셋 (#193·#197 · 약관 제8조③ — 「소비처 = 증분 추출 + 노트 합성」, 최초 색인은 무소비
+ * 1회): `synthesis` 는 ISSUE-361 로 합류했다 — 판정 규칙은 incremental 과 동일하게
+ * decideCreditSpend 하나를 지난다(같은 달 같은 식별자 무소비·hold·팩·고지 전부 공유).
+ */
+export type ExtractionKind = "initial-index" | "incremental" | "synthesis";
 
 export interface ExtractionRequest {
   kind: ExtractionKind;
-  /** 처리할 노트 — 식별자(경로)와 처리량(자 수)뿐이다: 내용은 이 판정에 닿지 않는다. */
+  /**
+   * 처리할 노트 — 식별자(경로)와 처리량(자 수)뿐이다: 내용은 이 판정에 닿지 않는다.
+   * 합성의 식별자는 `synthesis:<소스id>` 다 — vault·소스 노트 경로(`<id>:/…`)와 꼴이 달라
+   * 충돌이 없고, 「그 달 그 소스 재합성 무소비」가 추출의 유지권과 같은 기구로 선다.
+   */
   notes: { id: string; chars: number }[];
 }
 

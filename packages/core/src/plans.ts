@@ -158,7 +158,11 @@ export interface Plan {
   monthlyCredits: number | null;
   /** 최초 색인 뒤의 전체 재색인 — 무료는 1회로 끝이다. */
   reindex: boolean;
-  /** 원격 MCP (#81) — ⭐ 유료 상위 층의 차별점이다 (Henry 판정 2026-11-02). */
+  /**
+   * 원격 MCP (#81) — 개인은 Pro 의 차별점(Henry 판정 2026-11-02), 워크스페이스는 **Team
+   * Standard 부터**다(#193 개정, Henry 판정 2026-11-14 — 팀 가치 실현 지점이라 유료 전환
+   * 유인으로 내림 · 빈도 상한은 층차 버킷이 든다, `rate-limit.ts`).
+   */
   remoteMcp: boolean;
   /**
    * 구독 대상인가. `free` 는 거짓이다(바닥이라 살 것이 없다), `team` 도 거짓이다 —
@@ -232,20 +236,20 @@ export const PLANS: readonly Plan[] = [
   {
     id: "team-standard",
     name: "Team Standard",
-    blurb: "멤버당 월 2,000크레딧 풀에 SSO·SCIM 을 더합니다.",
-    blurbEn: "A pool of 2,000 credits per member a month, plus SSO and SCIM.",
+    blurb: "멤버당 월 2,000크레딧 풀에 원격 MCP 를 더합니다 — 외부 AI 도구가 팀 그래프에 연결됩니다.",
+    blurbEn: "A pool of 2,000 credits per member a month, plus remote MCP — external AI tools connect to the team graph.",
     price: { kind: "set", monthlyUsd: 20 },
     monthlyCredits: 2000,
     reindex: true,
-    remoteMcp: false,
+    remoteMcp: true, // ⭕ #193 개정 (2026-11-14) — 팀은 Standard 부터, 버킷은 보수 층 (rate-limit.ts)
     subscribable: false,
     seatBased: true,
   },
   {
     id: "team-pro",
     name: "Team Pro",
-    blurb: "크레딧 무제한, 원격 MCP, SSO·SCIM — 모든 기능이 포함됩니다.",
-    blurbEn: "Unlimited credits, remote MCP, SSO and SCIM — everything included.",
+    blurb: "크레딧 무제한, SSO·SCIM — 모든 기능이 포함됩니다.",
+    blurbEn: "Unlimited credits, SSO and SCIM — everything included.",
     price: { kind: "set", monthlyUsd: 40 },
     monthlyCredits: null,
     reindex: true,

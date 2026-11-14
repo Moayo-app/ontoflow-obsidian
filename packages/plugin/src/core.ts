@@ -10,14 +10,21 @@ export {
   applyPatch,
   configureSqlJs,
   loadDictionary,
+  markShared,
   openVault,
   rebuild,
   recordAliases,
   recordDistinction,
   resolveHome,
   retractNote,
+  retractShare,
+  loadProjection,
+  recordProjectionResult,
   vaultRelative,
 } from "../../core/src/store.js";
+// 동기화(투영) 집행 재료 (ISSUE-372) — 델타는 로컬 정본에서 뜨고, 판정은 허브가 진다.
+export { computeNotionDelta } from "../../core/src/notion.js";
+export type { ProjectionDest } from "../../core/src/store.js";
 export type {
   EdgeRetract,
   EdgeWrite,
@@ -28,6 +35,10 @@ export type {
   Patch,
   PatchResult,
 } from "../../core/src/store.js";
+
+// API 소스 오케스트레이션 (ISSUE-364) — 분모는 허브 금고의 연결, 전송은 주입(main 이 조립).
+export { collectApiSource, isApiSourceKind } from "../../core/src/api-sources.js";
+export type { ApiSourceKind, IngestPull } from "../../core/src/api-sources.js";
 
 export { designateHome } from "../../core/src/home.js";
 export type { DesignateResult } from "../../core/src/home.js";
@@ -145,6 +156,7 @@ export {
   SEED_REGISTRY,
   SUPERCLASSES,
   confirmProposal,
+  suggestVerbId,
   parseRegistry,
   rejectProposal,
   serializeRegistry,

@@ -188,7 +188,7 @@ await run("weekly-report");
 ok("주간 리포트 강제 실행 — 허브 왕복 0");
 
 // 기본 경로에서는 실패 알림이 한 건도 서지 않아야 한다 — wasm 이든 시작이든 내보내기든.
-const badNotice = obsidian.__notices.find((n) => /실패|wasm/i.test(n));
+const badNotice = obsidian.__notices.find((n) => /실패|failed|wasm/i.test(n)); // en 기본 로케일 동반 (ISSUE-368)
 if (badNotice) fail(`실패 알림이 섰다: ${badNotice}`);
 else ok("실패·wasm 알림 0 — 조용히 선다");
 

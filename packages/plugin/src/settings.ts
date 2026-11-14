@@ -13,6 +13,11 @@ export interface PluginSettings {
   hubToken: string | null;
   sources: IngestSource[];
   canonical: CanonicalMode;
+  /**
+   * 워크스페이스 문맥 (ISSUE-365) — 멤버로 일할 조직 id. 비우면 개인: 추출·합성 과금이 개인
+   * 지갑으로 가고 워크스페이스 투영(공유 합집합·전문가 찾기의 재료)은 돌지 않는다.
+   */
+  workspaceId: string | null;
   /** BYO 추출 엔드포인트 (#88) — OpenAI 호환 주소. 비우면 모아요 서빙(기본). */
   byoUrl: string;
   /** BYO 모델명 — 품질 비보증이라 선택은 사용자 몫. 주소와 모델이 둘 다 서야 BYO 가 선다. */
@@ -25,6 +30,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   hubToken: null,
   sources: [],
   canonical: "sqlite",
+  workspaceId: null,
   byoUrl: "",
   byoModel: "",
   byoApiKey: null,
@@ -37,6 +43,8 @@ export function parseSettings(raw: unknown): PluginSettings {
     hubToken: typeof doc.hubToken === "string" && doc.hubToken.length > 0 ? doc.hubToken : null,
     sources: parseIngestSources(doc.sources),
     canonical: doc.canonical === "pg" ? "pg" : "sqlite",
+    workspaceId:
+      typeof doc.workspaceId === "string" && doc.workspaceId.trim().length > 0 ? doc.workspaceId.trim() : null,
     byoUrl: typeof doc.byoUrl === "string" ? doc.byoUrl.trim() : DEFAULT_SETTINGS.byoUrl,
     byoModel: typeof doc.byoModel === "string" ? doc.byoModel.trim() : DEFAULT_SETTINGS.byoModel,
     byoApiKey: typeof doc.byoApiKey === "string" && doc.byoApiKey.length > 0 ? doc.byoApiKey : null,
