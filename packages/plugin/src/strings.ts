@@ -50,6 +50,8 @@ export interface PluginStrings {
   // 시작·수집(가져오기) 사이클
   startFailed: string;
   collectFailed: string;
+  /** 수집 유실 0 (#439 ①) — store 준비 전 편집의 대기 안내: 세션당 한 번만 선다. */
+  eventsDeferred: string;
   inboxDrained: string;
   inboxDrainFailed: string;
   dbFlushFailed: string;
@@ -215,6 +217,7 @@ export const PLUGIN_STRINGS: Record<PluginLocale, PluginStrings> = {
     cmdRetractShare: "현재 노트 공유 거두기",
     startFailed: "OntoFlow 시작에 실패했습니다: {msg}",
     collectFailed: "OntoFlow 가져오기에 실패했습니다: {msg}",
+    eventsDeferred: "그래프 연결 전의 편집을 대기해 두었습니다 — 연결되면 자동으로 반영됩니다(유실 없음)",
     inboxDrained: "원격 캡처 {n}건이 수신함으로 내려왔습니다",
     inboxDrainFailed: "수신함 내리기에 실패했습니다(캡처는 서버 데이터베이스에 남아 있습니다): {msg}",
     dbFlushFailed: "데이터베이스 반영에 실패했습니다: {msg} — 플러그인을 재시작하면 다시 불러옵니다",
@@ -377,6 +380,7 @@ export const PLUGIN_STRINGS: Record<PluginLocale, PluginStrings> = {
     cmdRetractShare: "Unshare current note",
     startFailed: "OntoFlow failed to start: {msg}",
     collectFailed: "OntoFlow import failed: {msg}",
+    eventsDeferred: "Edits made before the graph connected are queued — they sync automatically once it is ready (nothing lost)",
     inboxDrained: "{n} remote capture(s) arrived in your inbox",
     inboxDrainFailed: "Draining the inbox failed (captures stay on the server database): {msg}",
     dbFlushFailed: "Database write failed: {msg} — restart the plugin to reload",

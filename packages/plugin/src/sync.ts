@@ -82,31 +82,105 @@ async function excludedRoots(io: FileIo, vaultDir: string): Promise<string[]> {
   return [synthesis.dir, ...(home.rel !== null && home.rel !== "" ? [home.rel] : [])];
 }
 
-// 이벤트 하나를 수집 상태에 통과시킨다 — 산출이 없으면(무변·비대상) null 이다.
+// 이벤트 묶음을 순서대로 수집 상태에 통과시킨다 (#439 ②) — 상태 적재·저장이 묶음당 1회라
+// 저장 폭풍(자동 저장)에서 collect.json 재직렬화가 이벤트 수만큼 돌지 않는다. 산출 없는
+// 이벤트(무변·비대상)는 결과에서 빠진다.
+// ⚠️ 호출 전 가드가 계약이다 (#439 ①): 처리가 설 수 없는 자리(store 준비 전)에서 부르면
+// 상태가 「이미 본 것」으로 박혀 재시작 reconcile 로도 되줍지 못한다 — 그때는 부르지 말고
+// 이벤트를 대기열에 둬라(상태 미기록이면 다음 따라잡기가 같은 변경을 다시 줍는다).
+export async function collectEvents(
+  io: FileIo,
+  vaultDir: string,
+  events: readonly VaultEvent[],
+): Promise<CollectedChange[]> {
+  if (events.length === 0) return [];
+  const excluded = await excludedRoots(io, vaultDir);
+  const state = await loadCollectState(io, vaultDir);
+  const changes: CollectedChange[] = [];
+  for (const event of events) {
+    const change =
+      event.kind === "write"
+        ? collectWrite(state, event.path, event.content, event.stat, excluded)
+        : event.kind === "rename"
+          ? collectRename(state, event.from, event.to, event.content, event.stat, excluded)
+          : collectDelete(state, event.path);
+    if (change !== null) changes.push(change);
+  }
+  await saveCollectState(io, vaultDir, state);
+  return changes;
+}
+
+// 이벤트 하나 — 묶음의 특수형. 산출이 없으면(무변·비대상) null 이다.
 export async function collectEvent(
   io: FileIo,
   vaultDir: string,
   event: VaultEvent,
 ): Promise<CollectedChange | null> {
-  const excluded = await excludedRoots(io, vaultDir);
-  const state = await loadCollectState(io, vaultDir);
-  const change =
-    event.kind === "write"
-      ? collectWrite(state, event.path, event.content, event.stat, excluded)
-      : event.kind === "rename"
-        ? collectRename(state, event.from, event.to, event.content, event.stat, excluded)
-        : collectDelete(state, event.path);
-  await saveCollectState(io, vaultDir, state);
-  return change;
+  return (await collectEvents(io, vaultDir, [event]))[0] ?? null;
+}
+
+// ---- 이벤트 디바운스 (#439 ②) — 판정은 순수, 타이머 배선은 main 몫 ----
+
+/** 조용 창 — 마지막 이벤트 뒤 이만큼 조용하면 묶음을 민다 (자동 저장 간격보다 길게). */
+export const EVENT_QUIET_MS = 3_000;
+/** 최대 대기 — 연속 저장(타이핑 중 자동 저장)이 조용 창을 영원히 미루지 못하게 하는 상한. */
+export const EVENT_MAX_WAIT_MS = 30_000;
+
+/** 다음 플러시까지의 지연 — 조용 창과 「첫 적체로부터의 상한」 중 먼저 오는 쪽이다. */
+export function nextFlushDelay(firstQueuedAt: number, now: number): number {
+  return Math.max(0, Math.min(EVENT_QUIET_MS, firstQueuedAt + EVENT_MAX_WAIT_MS - now));
+}
+
+/**
+ * 묶음에서 승격 관찰(ObservedNote)을 뽑는다 — 경로별 마지막 원문만 남긴다: 같은 노트의
+ * 중간 저장본은 승격 판정(블록 디프)에 의미가 없고, rename 은 원문을 새 경로로 옮기며,
+ * delete 는 관찰을 걷는다(철회는 수집 산출 쪽 몫 — 기존 onEvent 의 「삭제는 관찰 0」 그대로).
+ */
+export function observedFromEvents(events: readonly VaultEvent[]): ObservedNote[] {
+  const latest = new Map<string, string>();
+  for (const event of events) {
+    if (event.kind === "write") {
+      latest.set(event.path, event.content);
+    } else if (event.kind === "rename") {
+      latest.delete(event.from);
+      latest.set(event.to, event.content);
+    } else {
+      latest.delete(event.path);
+    }
+  }
+  return [...latest.entries()].map(([path, content]) => ({ path, content }));
+}
+
+/** 따라잡기에서 다시 읽힌 노트의 현재 원문(투영 블록 포함) — 승격(ISSUE-451)의 입력. */
+export interface ObservedNote {
+  path: string;
+  content: string;
+}
+
+export interface CatchUpResult {
+  changes: CollectedChange[];
+  observed: ObservedNote[];
 }
 
 // 따라잡기 — 플러그인이 꺼져 있던 동안의 변경을 스냅샷 대조로 줍는다 (코어 reconcile 의 영속 배선).
-export async function catchUp(io: FileIo, vaultDir: string, reader: VaultReader): Promise<CollectedChange[]> {
+// 수집 산출(changes)과 별도로, stat 이 어긋나 다시 읽힌 파일의 **원문**을 observed 로 돌려준다
+// (ISSUE-451): 수집 상태의 body 는 투영 제거본이라 블록 편집 판정에 쓸 수 없고, reconcile 은
+// 원문을 버린다 — 블록만 고친 노트는 changes 0 으로 끝나 그 편집이 다음 재투영에 되덮인다.
+// 선별은 reconcile 의 상태 갱신을 그대로 비춘다(제외 루트·기계 저작 문서·삭제는 상태에 남지
+// 않아 자동 탈락) — 재독 비용은 stat 변경 파일 수에 비례, 무변 파일 재독 0 은 무변이다 (AC6).
+export async function catchUp(io: FileIo, vaultDir: string, reader: VaultReader): Promise<CatchUpResult> {
   const excluded = await excludedRoots(io, vaultDir);
   const state = await loadCollectState(io, vaultDir);
+  const before = new Map(Object.entries(state.files).map(([p, f]) => [p, `${f.mtime}:${f.size}`]));
   const changes = await reconcile(reader, state, excluded);
+  const observed: ObservedNote[] = [];
+  for (const [path, f] of Object.entries(state.files)) {
+    if (before.get(path) === `${f.mtime}:${f.size}`) continue;
+    observed.push({ path, content: await reader.read(path) });
+  }
+  // 저장은 재독 뒤에 — 재독이 중간에 던지면 상태도 안 선다: 다음 시작이 같은 변경을 다시 줍는다.
   await saveCollectState(io, vaultDir, state);
-  return changes;
+  return { changes, observed };
 }
 
 // ---- PG 정본 (#63) — 「보관은 PG, 판정은 작업본」: 정본은 사용자 PG, 로컬 파일(graph.sqlite·
@@ -173,19 +247,28 @@ export async function runSynthesis(
   return { path: written.path, title: note.title, md: note.md };
 }
 
-// PG 수집함 비우기 (#81) — 원격 MCP 캡처분이 vault 수집함(md)으로 내려와 다음 수집에 합류한다.
-// 파일로 선 뒤에만 서버 쪽이 지워지는 순서라(드레인이 돌려준 것만 삭제) 캡처 소실 0 이다.
+// PG 수집함 비우기 (#81 · #439 ③) — 원격 MCP 캡처분이 vault 수집함(md)으로 내려와 다음 수집에
+// 합류한다. 2단이다: 받기(peek — 서버는 지우지 않는다) → vault 파일 확정 → 삭제 확인(ack —
+// 파일로 선 id 만). 중간 실패·응답 유실 시 캡처는 서버에 남아 다음 드레인이 다시 받는다 —
+// 소실 0, 중복 허용(at-least-once: 같은 캡처가 vault 수집함에 두 번 설 수는 있다).
 export async function drainPgInbox(
   io: FileIo,
   vaultDir: string,
   hub: HubClient,
   now: string,
 ): Promise<{ written: string[] }> {
-  const { notes } = await hub.canonicalDrainInbox();
+  const { notes } = await hub.canonicalPeekInbox();
   const written: string[] = [];
-  for (const note of notes) {
-    const { path } = await captureToInbox(io, vaultDir, { title: note.title, md: note.md }, now);
-    written.push(path);
+  const landed: string[] = [];
+  try {
+    for (const note of notes) {
+      const { path } = await captureToInbox(io, vaultDir, { title: note.title, md: note.md }, now);
+      written.push(path);
+      landed.push(note.id);
+    }
+  } finally {
+    // 파일로 선 것만 확정한다 — 쓰기 루프가 중간에 던져도 선 몫의 삭제는 확정하고 던진다.
+    if (landed.length > 0) await hub.canonicalAckInbox(landed);
   }
   return { written };
 }
@@ -453,8 +536,14 @@ export async function runInitialIndex(
   startInitialIndex(await loadOnboarding(io, vaultDir), 0);
 
   // 수집 상태를 전량으로 세운다 — 이후 증분 수집의 기준점. 변경 목록 자체는 버린다:
-  // 재색인이 어차피 전량을 본다.
-  await catchUp(io, vaultDir, reader);
+  // 재색인이 어차피 전량을 본다. catchUp 이 아니라 reconcile 직행이다 — 전량 적재에서
+  // 승격 관찰(ISSUE-451)의 원문 재독까지 하면 전 파일을 두 번 읽는다.
+  {
+    const excluded = await excludedRoots(io, vaultDir);
+    const state = await loadCollectState(io, vaultDir);
+    await reconcile(reader, state, excluded);
+    await saveCollectState(io, vaultDir, state);
+  }
   const seeded = await loadCollectState(io, vaultDir);
   const notes: ReindexNote[] = Object.entries(seeded.files).map(([note, f]) => ({ note, body: f.body }));
 

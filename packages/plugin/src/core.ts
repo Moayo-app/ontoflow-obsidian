@@ -92,7 +92,7 @@ export { firstIndexHighlights } from "../../core/src/resurface.js";
 export type { FirstIndexHighlight } from "../../core/src/resurface.js";
 
 export { dumpCanonical, restoreCanonical } from "../../core/src/pg-store.js";
-export type { InboxNote } from "../../core/src/pg-store.js";
+export type { InboxNote, PeekedInboxNote } from "../../core/src/pg-store.js";
 export { captureToInbox } from "../../core/src/capture.js";
 export type { CanonicalDump } from "../../core/src/pg-store.js";
 

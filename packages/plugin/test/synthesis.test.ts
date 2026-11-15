@@ -45,7 +45,10 @@ function synthesisHub(calls: { count: number }): HubClient {
     canonicalFlush: async (): Promise<never> => {
       throw new Error("이 테스트는 PG 정본을 부르지 않는다");
     },
-    canonicalDrainInbox: async (): Promise<never> => {
+    canonicalPeekInbox: async (): Promise<never> => {
+      throw new Error("이 테스트는 PG 수집함을 부르지 않는다");
+    },
+    canonicalAckInbox: async (): Promise<never> => {
       throw new Error("이 테스트는 PG 수집함을 부르지 않는다");
     },
     workspaceLoad: async (): Promise<never> => {

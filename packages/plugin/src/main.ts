@@ -70,20 +70,25 @@ import {
 } from "./screens.js";
 import { DEFAULT_SETTINGS, byoEndpointOf, parseSettings, type PluginSettings } from "./settings.js";
 import {
+  EVENT_QUIET_MS,
   drainPgInbox,
   runResurface,
   applyLocal,
   catchUp,
-  collectEvent,
+  collectEvents,
   extractorFor,
   flushPgCanonical,
   holdForLater,
   loadPgCanonical,
+  nextFlushDelay,
+  observedFromEvents,
   promoteProjectionEdits,
   runInitialIndex,
   runSynthesis,
   sendToHub,
   takeHeld,
+  type ObservedNote,
+  type VaultEvent,
 } from "./sync.js";
 import { EXPORT_FILES, exportCommand, projectNoteCommand, type ExportFormat } from "./commands.js";
 
@@ -95,6 +100,13 @@ export default class OntoFlowPlugin extends Plugin {
   canonicalRev = 0;
   /** 워크스페이스 투영(ISSUE-365)의 rev 가드 — null = 아직 적재 전. 워크스페이스 전환 시 리셋. */
   workspaceRev: number | null = null;
+  // 이벤트 대기열 (#439 ①·②) — 디바운스 버퍼이자 store 준비 전 보류함: 수집 상태에 박는
+  // 것은 플러시 때뿐이라, 플러시 전에 날아간 몫은 다음 시작 따라잡기가 되줍는다 (유실 0).
+  private pendingEvents: VaultEvent[] = [];
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
+  private firstQueuedAt: number | null = null;
+  private flushing = false;
+  private deferNoticeShown = false;
 
   override async onload(): Promise<void> {
     this.settings = parseSettings(await this.loadData());
@@ -190,7 +202,7 @@ export default class OntoFlowPlugin extends Plugin {
       this.registerEvent(
         this.app.vault.on("delete", (file) => {
           if (file instanceof TFile && file.extension === "md") {
-            void this.onEvent({ kind: "delete", path: file.path });
+            this.queueEvent({ kind: "delete", path: file.path });
           }
         }),
       );
@@ -254,12 +266,16 @@ export default class OntoFlowPlugin extends Plugin {
           new Notice(fmt(P.inboxDrainFailed, { msg: (e as Error).message }));
         }
       }
-      const changes = await catchUp(this.io, PLUGIN_VAULT_DIR, this.reader());
-      await this.processChanges(changes);
+      // 따라잡기 (ISSUE-451) — observed(재독 원문)가 꺼진 동안의 블록 편집을 승격에 싣는다:
+      // changes 만 넘기던 때는 블록만 고친 노트가 산출 0 으로 끝나 다음 재투영에 되덮였다.
+      const { changes, observed } = await catchUp(this.io, PLUGIN_VAULT_DIR, this.reader());
+      await this.processChanges(changes, observed);
     } catch (e) {
       this.store = this.settings.canonical === "pg" ? null : this.store; // 반쪽 연결 0
       new Notice(fmt(P.startFailed, { msg: (e as Error).message }));
     }
+    // 시작 중 적체된 이벤트 (#439 ①) — store 가 섰으면 지금 비우고, 못 섰으면 대기 안내가 선다.
+    await this.flushEvents();
     await this.collectSources(false);
   }
 
@@ -478,7 +494,7 @@ export default class OntoFlowPlugin extends Plugin {
 
   private async onWrite(file: TFile): Promise<void> {
     const content = await this.app.vault.cachedRead(file);
-    await this.onEvent({
+    this.queueEvent({
       kind: "write",
       path: file.path,
       content,
@@ -488,7 +504,7 @@ export default class OntoFlowPlugin extends Plugin {
 
   private async onRename(file: TFile, oldPath: string): Promise<void> {
     const content = await this.app.vault.cachedRead(file);
-    await this.onEvent({
+    this.queueEvent({
       kind: "rename",
       from: oldPath,
       to: file.path,
@@ -497,38 +513,74 @@ export default class OntoFlowPlugin extends Plugin {
     });
   }
 
-  private async onEvent(
-    event: Parameters<typeof collectEvent>[2],
-  ): Promise<void> {
+  // 디바운스 적재 (#439 ②) — 이벤트마다 전체 파이프라인(수집 직렬화·전량 덤프·허브 왕복)을
+  // 돌리지 않는다: 조용 창까지 모아 한 묶음으로 민다. 지연 판정은 코어(nextFlushDelay) 몫.
+  private queueEvent(event: VaultEvent): void {
+    if (this.pendingEvents.length === 0) this.firstQueuedAt = Date.now();
+    this.pendingEvents.push(event);
+    if (this.flushTimer !== null) clearTimeout(this.flushTimer);
+    this.flushTimer = setTimeout(
+      () => void this.flushEvents(),
+      nextFlushDelay(this.firstQueuedAt ?? Date.now(), Date.now()),
+    );
+  }
+
+  private async flushEvents(): Promise<void> {
+    if (this.flushTimer !== null) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+    if (this.pendingEvents.length === 0) return;
+    if (this.flushing) {
+      // 플러시 중 재진입 — 끝난 뒤 조용 창으로 다시 잡는다 (이벤트 유실 0).
+      this.flushTimer = setTimeout(() => void this.flushEvents(), EVENT_QUIET_MS);
+      return;
+    }
+    if (this.store === null) {
+      // 수집 유실 0 (#439 ①) — 상태에 박기 전 대기: 전에는 collectEvent 가 상태를 먼저
+      // 저장해, PG 적재 실패·시작 미완 중의 편집이 「이미 본 것」으로 박힌 채 조용히
+      // 버려졌다(재시작 reconcile 에도 안 잡히는 영구 누락). 안내는 세션당 한 번.
+      if (!this.deferNoticeShown) {
+        this.deferNoticeShown = true;
+        new Notice(P.eventsDeferred);
+      }
+      return;
+    }
+    const events = this.pendingEvents.splice(0);
+    this.firstQueuedAt = null;
+    this.flushing = true;
     try {
-      const change = await collectEvent(this.io, PLUGIN_VAULT_DIR, event);
-      await this.processChanges(change ? [change] : [], event);
+      const changes = await collectEvents(this.io, PLUGIN_VAULT_DIR, events);
+      await this.processChanges(changes, observedFromEvents(events));
     } catch (e) {
       new Notice(fmt(P.collectFailed, { msg: (e as Error).message }));
+    } finally {
+      this.flushing = false;
     }
+  }
+
+  override onunload(): void {
+    // 플러시 전 대기분은 수집 상태 미기록이다 — 다음 시작의 따라잡기가 되줍는다 (#439 ① 유실 0).
+    if (this.flushTimer !== null) clearTimeout(this.flushTimer);
   }
 
   private async processChanges(
     changes: CollectedChange[],
-    event?: Parameters<typeof collectEvent>[2],
+    observed?: readonly ObservedNote[],
   ): Promise<void> {
     if (this.store === null) return;
     const onboarding = await loadOnboarding(this.io, PLUGIN_VAULT_DIR);
     // `§23` 동의 전 — 추출도 보류 적재도 없다 (AC2). 동의 뒤의 최초 색인이 전량을 따라잡는다.
     if (onboarding.consent === null) return;
     const registry = await loadRegistryFile(this.io, PLUGIN_VAULT_DIR);
-    // 투영 편집 승격 (ISSUE-430) — 수집 산출과 독립으로 이벤트 원문에서: 블록만 고친 저장은
-    // 수집 산출이 0(본문 무변)이라, 산출에 매달면 바로 그 저장이 소리 없이 소실된다.
-    const promoted =
-      event !== undefined && event.kind !== "delete"
-        ? await promoteProjectionEdits(
-            this.store,
-            registry,
-            event.kind === "write" ? event.path : event.to,
-            event.content,
-          )
-        : null;
-    if (changes.length === 0 && promoted === null) return;
+    // 투영 편집 승격 (ISSUE-430 라이브 · ISSUE-451 따라잡기) — 수집 산출과 독립으로 관찰
+    // 원문에서: 블록만 고친 저장은 수집 산출이 0(본문 무변)이라, 산출에 매달면 바로 그
+    // 저장이 소리 없이 소실된다. 라이브는 이벤트 원문 1건, 따라잡기는 재독 원문 목록이다.
+    let promoted = false;
+    for (const o of observed ?? []) {
+      if ((await promoteProjectionEdits(this.store, registry, o.path, o.content)) !== null) promoted = true;
+    }
+    if (changes.length === 0 && !promoted) return;
     if (changes.length > 0) {
       await applyLocal(this.io, PLUGIN_VAULT_DIR, this.store, registry, changes);
       try {

@@ -2,7 +2,7 @@
 // 이 모듈은 로그를 쓰지 않고, 오류에 토큰도 응답 원문도 되비치지 않는다 (AC5).
 import type {
   CanonicalDump,
-  InboxNote,
+  PeekedInboxNote,
   ContextEdge,
   SynthesisInput,
   SynthesisNote,
@@ -90,8 +90,12 @@ export interface HubClient extends Extractor {
   /** PG 정본 (#63) — 적재·반영: 자격증명은 금고의 postgres 꼴, 내용은 사용자 PG 에만 산다. */
   canonicalLoad(): Promise<CanonicalDump>;
   canonicalFlush(dump: CanonicalDump): Promise<{ rev: number }>;
-  /** PG 수집함 비우기 (#81) — 원격 MCP 캡처분을 vault 수집함으로 내리는 드레인. */
-  canonicalDrainInbox(): Promise<{ notes: InboxNote[] }>;
+  /**
+   * PG 수집함 2단 드레인 (#81 · #439 ③) — 받기(peek)는 지우지 않고 id 를 함께 돌려주고,
+   * 삭제 확인(ack)은 vault 파일로 확정한 id 만 든다: 응답 유실·파일 쓰기 실패에도 소실 0.
+   */
+  canonicalPeekInbox(): Promise<{ notes: PeekedInboxNote[] }>;
+  canonicalAckInbox(ids: readonly string[]): Promise<void>;
   /**
    * 워크스페이스 투영 (ISSUE-365) — 조직 PG 의 내 멤버 스키마에 적재·반영. 개인 canonical* 와
    * 정본 축이 다르다: 정본 지위는 무변이고(가시성 ≠ 소유 — #53·#214), 이 사본은 합집합·전문가
@@ -174,7 +178,10 @@ export function hubClient(
     },
     canonicalLoad: () => post<CanonicalDump>("/v1/canonical/pg/load", {}),
     canonicalFlush: (dump) => post<{ rev: number }>("/v1/canonical/pg/flush", { dump }),
-    canonicalDrainInbox: () => post<{ notes: InboxNote[] }>("/v1/canonical/pg/inbox/drain", {}),
+    canonicalPeekInbox: () => post<{ notes: PeekedInboxNote[] }>("/v1/canonical/pg/inbox/peek", {}),
+    canonicalAckInbox: async (ids) => {
+      await post("/v1/canonical/pg/inbox/ack", { ids: [...ids] });
+    },
     workspaceLoad: () => post<CanonicalDump>("/v1/canonical/pg/load", { orgId: requireWorkspace() }),
     workspaceFlush: (dump) => post<{ rev: number }>("/v1/canonical/pg/flush", { orgId: requireWorkspace(), dump }),
     ping: async () => {

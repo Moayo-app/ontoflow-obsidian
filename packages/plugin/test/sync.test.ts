@@ -17,13 +17,20 @@ import { PLUGIN_VAULT_DIR, obsidianFileIo } from "../src/obsidian-io.js";
 import { loadRegistryFile } from "../src/registry-io.js";
 import { onboardingView, reviewView, updateOnboarding } from "../src/screens.js";
 import {
+  EVENT_MAX_WAIT_MS,
+  EVENT_QUIET_MS,
   applyLocal,
+  catchUp,
   collectEvent,
+  collectEvents,
   holdForLater,
+  nextFlushDelay,
+  observedFromEvents,
   promoteProjectionEdits,
   runInitialIndex,
   sendToHub,
   takeHeld,
+  type VaultEvent,
 } from "../src/sync.js";
 import { fakeReader, fakeVault } from "./fakes.js";
 
@@ -55,7 +62,10 @@ const noSynthesis = {
   canonicalFlush: async (): Promise<never> => {
     throw new Error("이 테스트는 PG 정본을 부르지 않는다");
   },
-  canonicalDrainInbox: async (): Promise<never> => {
+  canonicalPeekInbox: async (): Promise<never> => {
+    throw new Error("이 테스트는 PG 수집함을 부르지 않는다");
+  },
+  canonicalAckInbox: async (): Promise<never> => {
     throw new Error("이 테스트는 PG 수집함을 부르지 않는다");
   },
   workspaceLoad: async (): Promise<never> => {
@@ -562,18 +572,22 @@ describe("재부상 한 판 (#80 AC3·AC4)", () => {
 });
 
 
-describe("PG 수집함 드레인 (#81)", () => {
-  it("원격 캡처분이 vault 수집함 md 로 내려와 다음 수집에 합류할 꼴로 선다", async () => {
+describe("PG 수집함 2단 드레인 (#81 · #439 ③)", () => {
+  const twoNotes = [
+    { id: "id-1", title: "회의록", md: "# 결정", capturedAt: "2026-11-01T00:00:00Z" },
+    { id: "id-2", title: "../탈출", md: "x", capturedAt: "2026-11-01T00:00:01Z" },
+  ];
+
+  it("받기 → vault 파일 확정 → 파일로 선 id 만 삭제 확인(ack)이 선다", async () => {
     const vault = fakeVault();
     const io = obsidianFileIo(vault.adapter);
+    const acked: string[][] = [];
     const hub = {
       ...noSynthesis,
-      canonicalDrainInbox: async () => ({
-        notes: [
-          { title: "회의록", md: "# 결정", capturedAt: "2026-11-01T00:00:00Z" },
-          { title: "../탈출", md: "x", capturedAt: "2026-11-01T00:00:01Z" },
-        ],
-      }),
+      canonicalPeekInbox: async () => ({ notes: twoNotes }),
+      canonicalAckInbox: async (ids: readonly string[]) => {
+        acked.push([...ids]);
+      },
     } as unknown as HubClient;
     const { drainPgInbox } = await import("../src/sync.js");
     const { written } = await drainPgInbox(io, PLUGIN_VAULT_DIR, hub, "2026-11-01T00:00:02Z");
@@ -581,6 +595,125 @@ describe("PG 수집함 드레인 (#81)", () => {
     expect(written[0]).toBe(`${PLUGIN_VAULT_DIR}/ontoflow-inbox/회의록.md`);
     expect(await io.readText(written[0]!)).toBe("# 결정");
     expect(written[1]).not.toContain(".."); // 제목 소독 — 수집함 밖 쓰기 0 (#75 AC6 재사용)
+    expect(acked).toEqual([["id-1", "id-2"]]); // ack 는 한 번, 파일로 선 전부
+  });
+
+  it("⭐ 파일 쓰기가 중간에 던지면 선 몫만 ack 하고 던진다 — 못 선 캡처는 서버에 남는다 (소실 0)", async () => {
+    const vault = fakeVault();
+    const io = obsidianFileIo(vault.adapter);
+    // 두 번째 쓰기부터 실패하는 io — 디스크 꽉 참·권한 변동 같은 쓰기 루프 중단의 재현.
+    let writes = 0;
+    const failing = {
+      ...io,
+      writeText: async (path: string, text: string) => {
+        writes += 1;
+        if (writes > 1) throw new Error("디스크가 가득 찼다");
+        await io.writeText(path, text);
+      },
+    };
+    const acked: string[][] = [];
+    const hub = {
+      ...noSynthesis,
+      canonicalPeekInbox: async () => ({ notes: twoNotes }),
+      canonicalAckInbox: async (ids: readonly string[]) => {
+        acked.push([...ids]);
+      },
+    } as unknown as HubClient;
+    const { drainPgInbox } = await import("../src/sync.js");
+    await expect(drainPgInbox(failing, PLUGIN_VAULT_DIR, hub, "2026-11-01T00:00:02Z")).rejects.toThrow(
+      "디스크가 가득 찼다",
+    );
+    expect(acked).toEqual([["id-1"]]); // 파일로 선 첫 캡처만 확정 — 둘째는 다음 드레인 몫
+  });
+
+  it("빈 수신함은 ack 호출 0 이다 — 확정할 것이 없다", async () => {
+    const vault = fakeVault();
+    const io = obsidianFileIo(vault.adapter);
+    const hub = {
+      ...noSynthesis,
+      canonicalPeekInbox: async () => ({ notes: [] }),
+      canonicalAckInbox: async (): Promise<never> => {
+        throw new Error("빈 드레인은 ack 를 부르지 않는다");
+      },
+    } as unknown as HubClient;
+    const { drainPgInbox } = await import("../src/sync.js");
+    expect((await drainPgInbox(io, PLUGIN_VAULT_DIR, hub, "2026-11-01T00:00:02Z")).written).toEqual([]);
+  });
+});
+
+describe("수집 유실 0 (#439 ①) — 상태 기록과 처리의 순서", () => {
+  const statFor = (body: string, mtime: number) => ({ mtime, size: body.length });
+
+  it("처리 못 한 이벤트를 상태에 박지 않으면 다음 따라잡기가 되줍는다 — 대기열 경로의 불변식", async () => {
+    const { io } = await openTestVault();
+    const notes = new Map([["a.md", { body: "처음", mtime: 1 }]]);
+    await catchUp(io, PLUGIN_VAULT_DIR, fakeReader(notes)); // 기준점 — A 가 상태에 선다
+    // 편집이 왔지만 store 준비 전 — 대기열 경로는 collectEvents 를 부르지 않는다(상태 미기록).
+    notes.set("a.md", { body: "고침", mtime: 2 });
+    const { changes } = await catchUp(io, PLUGIN_VAULT_DIR, fakeReader(notes));
+    expect(changes).toHaveLength(1);
+    expect(changes[0]).toMatchObject({ note: "a.md", kind: "modified" });
+  });
+
+  it("⛔ 반례 — 상태를 먼저 박고 처리가 버려지면 따라잡기도 못 줍는다: 가드가 수집 앞이어야 하는 이유", async () => {
+    const { io } = await openTestVault();
+    const notes = new Map([["a.md", { body: "처음", mtime: 1 }]]);
+    await catchUp(io, PLUGIN_VAULT_DIR, fakeReader(notes));
+    // 옛 꼴의 재현: 이벤트가 상태를 먼저 저장하고(collectEvent) 처리(store null)는 버려졌다.
+    notes.set("a.md", { body: "고침", mtime: 2 });
+    await collectEvent(io, PLUGIN_VAULT_DIR, { kind: "write", path: "a.md", content: "고침", stat: statFor("고침", 2) });
+    const { changes } = await catchUp(io, PLUGIN_VAULT_DIR, fakeReader(notes));
+    expect(changes).toHaveLength(0); // 「이미 본 것」 — 영구 누락의 실물이었다
+  });
+});
+
+describe("이벤트 디바운스 (#439 ②)", () => {
+  it("묶음 수집은 상태 저장이 1회다 — 이벤트마다 collect.json 재직렬화가 돌지 않는다", async () => {
+    const { io } = await openTestVault();
+    let stateWrites = 0;
+    const counting = {
+      ...io,
+      writeText: async (path: string, text: string) => {
+        if (path.endsWith("collect.json.tmp")) stateWrites += 1;
+        await io.writeText(path, text);
+      },
+    };
+    const events: VaultEvent[] = ["a", "b", "c"].map((n, i) => ({
+      kind: "write" as const,
+      path: `${n}.md`,
+      content: `본문 ${n}`,
+      stat: { mtime: i + 1, size: `본문 ${n}`.length },
+    }));
+    const changes = await collectEvents(counting, PLUGIN_VAULT_DIR, events);
+    expect(changes).toHaveLength(3);
+    expect(stateWrites).toBe(1);
+  });
+
+  it("묶음 안 순서가 보존된다 — write→rename 이 낱개 순차와 같은 산출이다", async () => {
+    const { io } = await openTestVault();
+    const changes = await collectEvents(io, PLUGIN_VAULT_DIR, [
+      { kind: "write", path: "a.md", content: "본문", stat: { mtime: 1, size: 2 } },
+      { kind: "rename", from: "a.md", to: "b.md", content: "본문", stat: { mtime: 2, size: 2 } },
+    ]);
+    expect(changes.map((c) => c.kind)).toEqual(["created", "renamed"]);
+    expect(changes[1]).toMatchObject({ note: "b.md", renamedFrom: "a.md" });
+  });
+
+  it("승격 관찰은 경로별 마지막 원문만 남는다 — rename 은 옮기고 delete 는 걷는다", () => {
+    const observed = observedFromEvents([
+      { kind: "write", path: "a.md", content: "v1", stat: { mtime: 1, size: 2 } },
+      { kind: "write", path: "a.md", content: "v2", stat: { mtime: 2, size: 2 } },
+      { kind: "rename", from: "a.md", to: "b.md", content: "v3", stat: { mtime: 3, size: 2 } },
+      { kind: "write", path: "c.md", content: "cc", stat: { mtime: 4, size: 2 } },
+      { kind: "delete", path: "c.md" },
+    ]);
+    expect(observed).toEqual([{ path: "b.md", content: "v3" }]);
+  });
+
+  it("플러시 지연 — 조용 창이 기본이고, 첫 적체로부터의 상한을 넘기지 않는다 (연속 저장 기아 방지)", () => {
+    expect(nextFlushDelay(1_000, 1_000)).toBe(EVENT_QUIET_MS);
+    expect(nextFlushDelay(1_000, 1_000 + EVENT_MAX_WAIT_MS - 1_000)).toBe(1_000);
+    expect(nextFlushDelay(1_000, 1_000 + EVENT_MAX_WAIT_MS + 5_000)).toBe(0);
   });
 });
 
@@ -686,5 +819,86 @@ describe("투영 편집 승격 배선 (ISSUE-430 — #10 AC18·AC3 「사용자 
     await projectNoteCommand(io, PLUGIN_VAULT_DIR, store, note);
     const untouched = (await io.readText(note)) ?? "";
     expect(await promoteProjectionEdits(store, registry, note, untouched)).toBeNull(); // 무변 — 패치 0
+  });
+});
+
+describe("따라잡기 승격 (ISSUE-451 — #430 의 catchUp 잔여: 꺼진 동안의 블록 편집)", () => {
+  it("블록만 고친 노트: 수집 산출 0 이어도 observed 로 돌아와 by:user 승격·재투영이 지킨다", async () => {
+    const { io, store, registry } = await openTestVault();
+    const { applyPatch, parseProjection } = await import("../src/core.js");
+    const note = "수면.md";
+    await applyPatch(store, registry, {
+      add: [
+        {
+          s: "수면",
+          v: "causes",
+          o: "입면 지연",
+          confidence: 0.9,
+          fallback: false,
+          by: "auto",
+          src: { note, origin: "extract" },
+        },
+      ],
+      retract: [],
+    });
+    await io.writeText(note, "수면에 관한 노트.");
+    await projectNoteCommand(io, PLUGIN_VAULT_DIR, store, note);
+    const projected = (await io.readText(note)) ?? "";
+
+    // 추적 세움 — 투영된 그대로를 따라잡기 한 판으로 수집 상태에 박는다.
+    const notes = new Map([[note, { body: projected, mtime: 1 }]]);
+    await catchUp(io, PLUGIN_VAULT_DIR, fakeReader(notes));
+
+    // 꺼진 동안의 블록만 편집 — 본문(투영 제거본)은 무변이다.
+    const edited = projected.replace("confidence: 0.9", "confidence: 0.4");
+    expect(edited).not.toBe(projected);
+    notes.set(note, { body: edited, mtime: 2 });
+
+    const { changes, observed } = await catchUp(io, PLUGIN_VAULT_DIR, fakeReader(notes));
+    expect(changes).toHaveLength(0); // 수집 산출 0 — 여기 매달면 바로 이 편집이 소실된다
+    expect(observed).toEqual([{ path: note, content: edited }]); // 원문이 승격 입력으로 돌아온다
+
+    // 배선과 같은 순서 — observed 원문이 그대로 승격을 탄다 (main.processChanges 의 루프).
+    expect(await promoteProjectionEdits(store, registry, note, edited)).not.toBeNull();
+    expect(projectionDataFor(store, note).edges[0]).toMatchObject({ by: "user", confidence: 0.4 });
+
+    // 재투영 생존 — 편집이 소리 없이 되덮이던 옛 catchUp 경로의 역전.
+    await projectNoteCommand(io, PLUGIN_VAULT_DIR, store, note);
+    const reread = parseProjection((await io.readText(note)) ?? "");
+    expect(reread?.edges[0]).toMatchObject({ by: "user", confidence: 0.4 });
+  });
+
+  it("선별은 stat 규율 그대로다 — 무변 재독 0 · 본문 변경은 수집 산출과 공존 · 삭제는 관찰 0", async () => {
+    const { io } = await openTestVault();
+    const notes = new Map([
+      ["무변.md", { body: "그대로인 본문.", mtime: 1 }],
+      ["본문변경.md", { body: "고치기 전 본문.", mtime: 1 }],
+      ["삭제.md", { body: "사라질 본문.", mtime: 1 }],
+    ]);
+    await catchUp(io, PLUGIN_VAULT_DIR, fakeReader(notes));
+
+    notes.set("본문변경.md", { body: "고친 뒤 본문.", mtime: 2 });
+    notes.delete("삭제.md"); // read 가 던지는 가짜 리더다 — 관찰이 삭제를 재독하면 여기서 터진다
+    notes.set("신규.md", { body: "꺼진 동안 생긴 노트.", mtime: 2 });
+    const base = fakeReader(notes);
+    const reads: string[] = [];
+    const counting = {
+      list: base.list,
+      read: async (path: string) => {
+        reads.push(path);
+        return base.read(path);
+      },
+    };
+
+    const { changes, observed } = await catchUp(io, PLUGIN_VAULT_DIR, counting);
+    expect(changes.map((c) => `${c.kind}:${c.note}`).sort()).toEqual([
+      "created:신규.md",
+      "deleted:삭제.md",
+      "modified:본문변경.md",
+    ]);
+    // 본문도 바뀐 파일은 수집 산출과 공존하고(승격 먼저·디프는 제거본 기준), 신규도 관찰된다
+    // (라이브 생성 이벤트와 등가 — 블록째 복제된 노트가 이 자리로 온다).
+    expect(observed.map((o) => o.path).sort()).toEqual(["본문변경.md", "신규.md"]);
+    expect(reads.filter((p) => p === "무변.md")).toHaveLength(0); // stat 무변 — 재독 0 (AC6 무변)
   });
 });

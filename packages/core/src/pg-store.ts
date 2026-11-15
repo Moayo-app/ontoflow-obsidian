@@ -373,16 +373,50 @@ export async function pushInbox(
   return { id };
 }
 
-/** 비우기 — 읽고 지우는 한 판. 돌려준 것만 지운다 (드레인 사이에 들어온 캡처는 다음 판 몫). */
-export async function drainInbox(session: PgCanonicalSession, schema: string): Promise<InboxNote[]> {
+/** id 동반 수신함 노트 — 2단 드레인(#439 ③)에서 ack 가 짚는 손잡이다. */
+export interface PeekedInboxNote extends InboxNote {
+  id: string;
+}
+
+/**
+ * 받기 (#439 ③ — 2단 드레인의 앞절반): 지우지 않고 돌려준다. 삭제는 호출자가 vault 파일로
+ * 확정한 id 를 ackInbox 로 들고 와야 선다 — 응답 유실·파일 쓰기 실패 시 캡처가 서버에 남는
+ * 것이 #81 「소실 0」 의 실물이다(재받기 중복은 허용 — at-least-once).
+ */
+export async function peekInbox(session: PgCanonicalSession, schema: string): Promise<PeekedInboxNote[]> {
   assertCanonicalSchema(schema);
-  await session.transact(ddl(schema)); // 멱등 — 빈 정본의 드레인도 선다
+  await session.transact(ddl(schema)); // 멱등 — 빈 정본의 받기도 선다
   const rows = (await session.query(
     `SELECT id, title, md, captured_at FROM ${schema}.canonical_inbox ORDER BY captured_at, id`,
   )) as { id: string; title: string; md: string; captured_at: string }[];
-  if (rows.length === 0) return [];
+  return rows.map((r) => ({ id: r.id, title: r.title, md: r.md, capturedAt: r.captured_at }));
+}
+
+/** 삭제 확인 (#439 ③ — 2단 드레인의 뒷절반): 확정된 id 만 지운다. 모르는 id 는 무해(멱등). */
+export async function ackInbox(
+  session: PgCanonicalSession,
+  schema: string,
+  ids: readonly string[],
+): Promise<void> {
+  assertCanonicalSchema(schema);
+  if (ids.length === 0) return;
   await session.transact(
-    rows.map((r) => ({ sql: `DELETE FROM ${schema}.canonical_inbox WHERE id = $1`, params: [r.id] })),
+    ids.map((id) => ({ sql: `DELETE FROM ${schema}.canonical_inbox WHERE id = $1`, params: [id] })),
   );
-  return rows.map((r) => ({ title: r.title, md: r.md, capturedAt: r.captured_at }));
+}
+
+/**
+ * ⚠️ 한 판 드레인 — SELECT 직후 DELETE 라 응답 유실 시 캡처가 소실되는 창이 있다 (#439 ③).
+ * 새 경로는 peekInbox→ackInbox 2단이고, 이 함수는 배포된 구버전 플러그인의 `/inbox/drain`
+ * 호환으로만 남는다 — 새 호출처를 만들지 않는다.
+ */
+export async function drainInbox(session: PgCanonicalSession, schema: string): Promise<InboxNote[]> {
+  const rows = await peekInbox(session, schema);
+  if (rows.length === 0) return [];
+  await ackInbox(
+    session,
+    schema,
+    rows.map((r) => r.id),
+  );
+  return rows.map((r) => ({ title: r.title, md: r.md, capturedAt: r.capturedAt }));
 }

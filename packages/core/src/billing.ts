@@ -338,6 +338,12 @@ export interface Subscription {
   /** 다음 주기부터 바뀔 결제 주기 (#132) — 연 → 월 예약이 여기 앉는다. */
   pendingInterval?: BillingInterval;
   /**
+   * 기간 말 해지 접수 (ISSUE-432) — 해지는 즉시가 아니라 **지불한 기간의 끝**에 선다: Polar
+   * 에 보내는 것이 `cancel_at_period_end` 이므로 로컬도 같은 말을 한다. 상태를 canceled 로
+   * 닫는 것은 기간 말의 해지 웹훅이고, 그때까지 혜택·유료 수(`paidTriggerEvent`)는 유료다.
+   */
+  cancelAtPeriodEnd?: boolean;
+  /**
    * 가격판 코호트 (ISSUE-242 AC9 — 제8조⑦) — 구독 **생성** 시의 plans.ts 판이 찍히고, 갱신·
    * 좌석 변경·상태 전이가 바꾸지 않는다: 출시 가격이 그 코호트에 영구라는 약속의 기록이다
    * (워크스페이스 멤버 단가 동일 적용 — #211 Q6). 칸 부재 = 출시 코호트(cohortOf).
@@ -510,7 +516,22 @@ export interface PolarEvent {
     product_id?: string;
     /** ⭐ `metadata` 가 **우리 상품인가**의 표식이다 — 아래 `isOurProduct` 주석 참조. */
     product?: { id?: string; metadata?: Record<string, unknown> };
+    /** 실전이 시각 (ISSUE-432) — 순서 가드와 `updatedAt` 의 근거. 없으면 전달 시각으로 읽는다. */
+    modified_at?: string | null;
+    created_at?: string;
+    /** 기간 말 해지 표식 (ISSUE-432) — 우리 해지 PATCH 의 에코가 참으로 실어 온다. */
+    cancel_at_period_end?: boolean;
   };
+}
+
+/**
+ * 이벤트가 말하는 실전이 시각 (ISSUE-432) — `updatedAt` 에 **전달 시각(now)이 아니라 이
+ * 시각**을 찍는다: 장부 TTL 밖의 중복 전달이 레코드를 다시 스탬프하면 체납 유예·해지 30일
+ * 이관 창의 시계가 민다. 시각이 안 실린 이벤트만 전달 시각으로 폴백한다(과거 동작 그대로).
+ */
+function eventTimeOf(data: PolarEvent["data"], now: string): string {
+  const at = data.modified_at ?? data.created_at;
+  return typeof at === "string" && at.length > 0 ? at : now;
 }
 
 /**
@@ -628,6 +649,8 @@ export interface WebhookOutcome {
   applied: boolean;
   subscription: Subscription | null;
   foreign?: boolean;
+  /** 적용 전의 기존 레코드 (ISSUE-432) — 서버의 전이 판정(퍼널 유료 분자)이 재조회 없이 쓴다. */
+  previous?: Subscription | null;
 }
 
 export function applySubscriptionEvent(
@@ -660,31 +683,82 @@ export function applySubscriptionEvent(
       "웹훅 데이터에 구독 id·계정 id 가 없습니다 — 체크아웃 metadata 왕복이 계약입니다",
     ]);
   }
+  // ---- 순서·동일성 가드 (ISSUE-432) — 웹훅은 순서를 약속하지 않는다 ----
+  //
+  // 해지 후 재구독에서 구 구독의 canceled 가 새 구독 active **뒤에** 도착하면, 가드 없는
+  // 덮어쓰기는 결제 중인 사용자를 무료로 떨어뜨리고 `paidTriggerEvent` 가 유료 0 을 오보한다
+  // (서빙 복귀 시계 오발). 축은 둘이다 — ⑴ **동일성**: 다른 `polarId` 의 이벤트는 이 레코드의
+  // 과거가 아니라 남이다 ⑵ **시각**: 같은 구독의 과거 이벤트(재전달 포함)는 레코드를 되돌리지
+  // 않는다. 같은 시각(같은 이벤트의 재전달)은 적용돼도 동일 레코드라 멱등이다.
+  const evAt = eventTimeOf(data, now);
+  const sameSub = current !== null && current.polarId === id;
+  if (sameSub && Date.parse(evAt) < Date.parse(current.updatedAt)) {
+    return { applied: false, subscription: current };
+  }
   if (event.type === "subscription.canceled" || event.type === "subscription.revoked") {
+    if (current !== null && !sameSub) {
+      // 다른 구독의 해지 — 재구독 역순 전달의 전형이다: 죽은 구독이 산 레코드를 밀어내지 못한다.
+      return { applied: false, subscription: current };
+    }
     // 해지는 요금제를 묻지 않는다 — 혜택이 무료 층으로 떨어지는 것이 상태가 말하는 전부다.
-    return { applied: true, subscription: { accountId, polarId: id, status: "canceled", updatedAt: now } };
+    // 요금제·주기·코호트는 보존한다: 「무엇을 해지했나」가 기록으로 남는다 (보류·해지 표식은 닫힌 일이라 걷는다).
+    const kept = !sameSub
+      ? {}
+      : {
+          ...(current.plan === undefined ? {} : { plan: current.plan }),
+          ...(current.interval === undefined ? {} : { interval: current.interval }),
+          ...(current.cohort === undefined ? {} : { cohort: current.cohort }),
+        };
+    return { applied: true, subscription: { accountId, polarId: id, status: "canceled", updatedAt: evAt, ...kept } };
   }
   const status = SUBSCRIPTION_STATUS[data.status ?? ""];
   if (status === undefined) return { applied: false, subscription: current };
+  if (current !== null && !sameSub) {
+    // 다른 polarId 가 레코드를 차지하는 길은 **더 새로운 활성**뿐이다 (재구독의 새 구독).
+    // 구 구독 이벤트의 재전달은 — 활성이었더라도 — 지금 레코드보다 과거라 여기서 걸러진다.
+    if (status !== "active" || Date.parse(evAt) <= Date.parse(current.updatedAt)) {
+      return { applied: false, subscription: current };
+    }
+  }
+  // 상속은 **같은 구독**에만 선다 (ISSUE-432) — 상품 정보 없는 갱신 이벤트가 요금제·주기를
+  // 잃지 않되, 재구독(새 polarId)이 옛 구독의 판을 물려받지는 않는다: 새 구독은 지금 카탈로그로
+  // 산 것이다 (제8조⑦ 의 코호트 약속은 「그 구독」에 선다).
+  const inherited = sameSub ? current : null;
   // 맵이 비어 있으면 요금제 칸을 비운다 — `planOfSubscription` 이 그것을 무료 층으로 닫는다.
   const plan =
-    Object.keys(products).length === 0 ? undefined : (planOfProduct(products, productIdOf(data)) ?? current?.plan);
-  const interval = intervalOf(data);
+    Object.keys(products).length === 0 ? undefined : (planOfProduct(products, productIdOf(data)) ?? inherited?.plan);
+  const interval = intervalOf(data) ?? inherited?.interval;
+  // ⭐ 보류(pendingPlan/Interval)는 **예약의 기록**이다 (ISSUE-432) — 치우는 것은 요금제·주기가
+  //    **실제로 바뀐** 이벤트뿐이다: Polar 가 `next_period` 변경을 적용하면 새 값이 실려 오고,
+  //    그때 「다음 주기」가 「지금」이 된 것이다. 그 밖의 웹훅(갱신·상태 전이)은 예약을 보존한다.
+  const pendingKept =
+    inherited !== null &&
+    (plan ?? null) === (inherited.plan ?? null) &&
+    (interval ?? "month") === (inherited.interval ?? "month")
+      ? {
+          ...(inherited.pendingPlan === undefined ? {} : { pendingPlan: inherited.pendingPlan }),
+          ...(inherited.pendingInterval === undefined ? {} : { pendingInterval: inherited.pendingInterval }),
+        }
+      : {};
+  // 기간 말 해지 표식 — 에코가 명시하면 그 말이 정본이고(참·거짓 모두), 말하지 않으면 보존한다.
+  const cancelAtPeriodEnd =
+    data.cancel_at_period_end ?? (inherited?.cancelAtPeriodEnd === true ? true : undefined);
   return {
     applied: true,
     subscription: {
       accountId,
       polarId: id,
       status,
-      updatedAt: now,
-      // 코호트 (ISSUE-242 AC9 — 제8조⑦): 생성 시의 가격판이 찍히고 갱신이 보존한다 —
-      // 상태·요금제가 바뀌어도 「언제 산 구독인가」는 바뀌지 않는다.
-      cohort: current?.cohort ?? PLANS_COHORT,
+      updatedAt: evAt,
+      // 코호트 (ISSUE-242 AC9 — 제8조⑦): 생성 시의 가격판이 찍히고 같은 구독의 갱신이 보존한다
+      // — 상태·요금제가 바뀌어도 「언제 산 구독인가」는 바뀌지 않는다. ⚠️ ISSUE-432 전엔 이
+      // 보존이 죽은 코드였다(웹훅이 current=null 로 불렀다): 가격 개정 뒤 갱신 한 번에 코호트가
+      // 새 판으로 덮이는 제8조⑦ 위반 경로였다.
+      cohort: inherited?.cohort ?? PLANS_COHORT,
       ...(plan === undefined ? {} : { plan }),
       ...(interval === undefined ? {} : { interval }),
-      // ⭐ 요금제·주기가 실제로 바뀐 이벤트가 **보류를 치운다** — Polar 가 `next_period`
-      //    변경을 적용하면 그 이벤트가 여기로 오고, 그때 「다음 주기」는 「지금」이 된 것이다.
-      //    새 레코드를 짓고 `pendingPlan`/`pendingInterval` 을 싣지 않는 것이 그 집행이다.
+      ...pendingKept,
+      ...(cancelAtPeriodEnd === true ? { cancelAtPeriodEnd: true } : {}),
     },
   };
 }
@@ -716,12 +790,23 @@ export async function handlePolarWebhook(
   secret: string,
   headers: WebhookHeaders,
   payload: string,
-  current: Subscription | null,
+  /**
+   * 기존 구독 조회 (ISSUE-432) — 호출자가 저장소 읽기를 잇는다. ⚠️ **null 상수가 아니라
+   * 조회를 받는 것이 이 자리의 계약이다**: 웹훅이 current=null 로 부르던 동안
+   * `applySubscriptionEvent` 의 보존(코호트·요금제 폴백·보류)과 가드가 전부 죽은 코드였다.
+   */
+  lookup: (accountId: string) => Promise<Subscription | null>,
   now: string,
   /** 요금제 역매핑 (#130) — 상품 맵. 빈 맵이면 요금제를 묻지 않는다. */
   products: Readonly<Record<string, PlanId>> = {},
 ): Promise<WebhookOutcome> {
-  return applySubscriptionEvent(current, await verifiedWebhookEvent(secret, headers, payload, now), now, products);
+  const event = await verifiedWebhookEvent(secret, headers, payload, now);
+  // 조회는 구독 축에만 — 서명을 지난 본문의 accountId 로만 저장소에 닿는다 (위조 조회 0).
+  const accountId = event.type.startsWith("subscription.")
+    ? accountIdOf((event.data ?? {}) as PolarEvent["data"])
+    : null;
+  const current = accountId === null ? null : await lookup(accountId);
+  return { ...applySubscriptionEvent(current, event, now, products), previous: current };
 }
 
 // ---- 팩 구매·환불의 Polar 왕복 (#193 B4 · ISSUE-233 AC7·AC8) ----
@@ -803,7 +888,12 @@ export function cancelSubscription(
 ): Subscription {
   assertAccountOwner(auth);
   if (subscription === null) throw new BillingError(404, ["해지할 구독이 없습니다"]);
-  return { ...subscription, status: "canceled", updatedAt: now };
+  // 기간 말 해지 (ISSUE-432) — Polar 엔 `cancel_at_period_end` 를 보내면서 로컬만 즉시
+  // canceled 로 꺾으면 넷이 틀린다: 지불한 잔여 기간의 유료 혜택 상실 · hosted 30일 이관 창
+  // 조기 개시 · Polar 의 updated(active) 에코와 상태 왕복 · paid-zero 서빙 신호 조기 발화.
+  // 상태를 canceled 로 닫는 것은 **기간 말의 해지 웹훅**이고, 여기는 접수 표식만 선다.
+  if (subscription.cancelAtPeriodEnd === true) return subscription; // 재접수 — 시계 재스탬프 0
+  return { ...subscription, cancelAtPeriodEnd: true, updatedAt: now };
 }
 
 // ---- 증액·무료→유료 전환 (AC3 · `§13`⑥) — 30일 전 동의 없이 시행되지 않는다 ----
@@ -1173,6 +1263,11 @@ export function decidePlanSwitch(
         : "해지된 구독입니다 — 다시 구독해 주세요",
     ]);
   }
+  // 기간 말 해지 접수분 (ISSUE-432) — Polar 쪽이 이미 기간 말 해지로 가는 구독이라 변경
+  // PATCH 가 그 접수와 충돌한다. 혜택은 기간 말까지 유지되고, 그 뒤 새 구독으로 고르면 된다.
+  if (subscription.cancelAtPeriodEnd === true) {
+    throw new BillingError(409, ["해지가 접수된 구독입니다 — 남은 기간이 끝나면 닫힙니다. 그 뒤 다시 구독해 주세요."]);
+  }
   const from = planOfSubscription(subscription).id;
   const fromInterval = intervalOfSubscription(subscription);
   const nextInterval = toInterval ?? fromInterval;
@@ -1227,7 +1322,12 @@ export const PROCESSORS = [
 
 export interface ConsoleView {
   accountId: string;
-  subscription: { status: SubscriptionStatus | "free"; updatedAt: string | null };
+  subscription: {
+    status: SubscriptionStatus | "free";
+    updatedAt: string | null;
+    /** 기간 말 해지 접수 (ISSUE-432) — 활성인데 참이면 화면은 「해지 예정」을 그린다. */
+    cancelAtPeriodEnd: boolean;
+  };
   /** 금고의 목적지 연결 — 연결 사실만 든다: 비밀값은 콘솔에 오지 않는다. */
   destinations: Destination[];
   processors: typeof PROCESSORS;
@@ -1289,6 +1389,7 @@ export function consoleView(
     subscription: {
       status: live ? subscription.status : "free",
       updatedAt: subscription?.updatedAt ?? null,
+      cancelAtPeriodEnd: live && subscription.cancelAtPeriodEnd === true,
     },
     // 체납 단계 고지 (ISSUE-242 AC8) — 각 단계 고지가 콘솔에 선다.
     dunning: dunningStage === null ? null : { stage: dunningStage, notice: DUNNING_NOTICES[dunningStage] },
@@ -1301,7 +1402,16 @@ export function consoleView(
     destinations,
     processors: PROCESSORS,
     // ⭐ 「구독」/「해지」에 「요금제 변경」이 더해진다 — 활성 구독에서만 선다.
-    actions: live ? (subscription.status === "active" ? ["해지", "요금제 변경"] : ["해지"]) : ["구독"],
+    // 기간 말 해지 접수분 (ISSUE-432) — 행동이 비어 선다: 해지는 이미 접수됐고(재해지 0),
+    // 변경은 코어 판정이 409 로 막으며, 새 구독은 기간 말 canceled 가 닫은 뒤에 선다.
+    actions:
+      live && subscription.cancelAtPeriodEnd === true
+        ? []
+        : live
+          ? subscription.status === "active"
+            ? ["해지", "요금제 변경"]
+            : ["해지"]
+          : ["구독"],
     // ⚠️ 쿼터 칸은 「무료냐」가 아니라 **「쿼터가 유한한가」**로 선다: 하위 유료 층도 쿼터가
     //    있으므로, 유료를 무조건 null 로 두면 스탠다드 회원이 자기 잔량을 못 본다.
     freeTier:
