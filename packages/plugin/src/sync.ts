@@ -16,6 +16,7 @@ import {
   deltaSince,
   RESURFACE_NOTE_ID,
   OnboardingError,
+  abortInitialIndex,
   applyPatch,
   collectDelete,
   collectRename,
@@ -39,6 +40,8 @@ import {
   saveSynthesisState,
   synthesisInputFor,
   writeSynthesisNote,
+  collectProjectionEdits,
+  parseProjection,
   projectionDataFor,
   rebuild,
   reconcile,
@@ -246,6 +249,29 @@ export interface LocalEffects {
   typingsQueued: number;
 }
 
+// ---- 투영 편집 승격 (#10 AC18·AC3 — ISSUE-430) ----
+// 유일한 양방향 표면의 읽는 쪽 절반: 사용자가 frontmatter `ontoflow:` 블록을 고치면 그 디프가
+// by:user 패치로 정본에 승격된다. 수집 산출과 **독립**으로 이벤트 원문에서 돌아야 한다 —
+// 블록만 고친 저장은 본문(투영 제거본)이 무변이라 collectWrite 가 null 을 돌려주는데, 바로 그
+// 저장이 손실 지점이었다(수집은 블록째 벗기고, 다음 재투영이 정본 값으로 되덮었다).
+export async function promoteProjectionEdits(
+  store: GraphStore,
+  registry: Registry,
+  notePath: string,
+  content: string,
+): Promise<PatchResult | null> {
+  let observed: ReturnType<typeof parseProjection>;
+  try {
+    observed = parseProjection(content);
+  } catch {
+    return null; // 손상 블록 — 편집 판정 불가: 승격 없이 둔다(재투영이 블록을 되세운다)
+  }
+  if (observed === null) return null; // 블록 없음 = 아직 투영 전 — 편집이 아니다
+  const edits = collectProjectionEdits(notePath, projectionDataFor(store, notePath), observed);
+  if (edits.add.length === 0 && edits.retract.length === 0) return null;
+  return applyPatch(store, registry, edits);
+}
+
 // 허브 없이 끝나는 효과 — 철회·위키링크 폴백 엣지·타이핑 제안. 수집 직후 항상 돈다.
 export async function applyLocal(
   io: FileIo,
@@ -435,21 +461,29 @@ export async function runInitialIndex(
   let onboarding = startInitialIndex(await loadOnboarding(io, vaultDir), notes.length);
   await saveOnboarding(io, vaultDir, onboarding);
 
-  const res = await hub.extractReindex({
-    registry,
-    notes,
-    ...(dictionary === undefined ? {} : { dictionary }),
-  });
-  const store = await rebuild(io, vaultDir, res.versions, async (work) => {
-    await applyPatch(work, registry, { add: res.edges, retract: [] });
-  });
-  if (res.proposals.length > 0) {
-    const queue = await loadReviewQueue(io, vaultDir);
-    await saveReviewQueue(io, vaultDir, observeVerbs(queue, res.proposals));
+  try {
+    const res = await hub.extractReindex({
+      registry,
+      notes,
+      ...(dictionary === undefined ? {} : { dictionary }),
+    });
+    const store = await rebuild(io, vaultDir, res.versions, async (work) => {
+      await applyPatch(work, registry, { add: res.edges, retract: [] });
+    });
+    if (res.proposals.length > 0) {
+      const queue = await loadReviewQueue(io, vaultDir);
+      await saveReviewQueue(io, vaultDir, observeVerbs(queue, res.proposals));
+    }
+    await applyNormalization(io, vaultDir, store, res.aliases, res.merges); // 별칭은 새 정본에 박는다
+    // 진행률은 한 호출이라 한 번에 닿는다 — 호출 단위 세분화는 허브 조립(#43) 뒤 몫: 재색인
+    // 분할은 「최초 색인 1회」 과금 표식·원자 교체 의미론과 함께 움직여야 해 여기서 하지 않는다.
+    onboarding = recordIndexProgress(onboarding, notes.length, now);
+    await saveOnboarding(io, vaultDir, onboarding);
+    return { store, total: notes.length, held: res.held };
+  } catch (e) {
+    // 실패 원복 (ISSUE-431) — 시작 표식이 남으면 「색인 시작」 버튼이 영구 비활성(막다른 길):
+    // 시작 전으로 되돌리고 던진다 — 사유 Notice 와 재시도는 호출자(온보딩 모달) 몫이다.
+    await saveOnboarding(io, vaultDir, abortInitialIndex(await loadOnboarding(io, vaultDir)));
+    throw e;
   }
-  await applyNormalization(io, vaultDir, store, res.aliases, res.merges); // 별칭은 새 정본에 박는다
-  // 진행률은 한 호출이라 한 번에 닿는다 — 호출 단위 세분화는 허브 조립(#43) 뒤 몫.
-  onboarding = recordIndexProgress(onboarding, notes.length, now);
-  await saveOnboarding(io, vaultDir, onboarding);
-  return { store, total: notes.length, held: res.held };
 }

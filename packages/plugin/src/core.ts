@@ -118,6 +118,7 @@ export type { SynthesisInput, SynthesisNote, SynthesisState } from "../../core/s
 
 export {
   OnboardingError,
+  abortInitialIndex,
   chooseVault,
   connectHub,
   emptyOnboarding,
@@ -163,7 +164,7 @@ export {
 } from "../../core/src/registry.js";
 export type { Observation, Proposal, Registry, Superclass, Verb } from "../../core/src/registry.js";
 
-export { projectionDataFor, projectNote } from "../../core/src/project.js";
+export { collectProjectionEdits, parseProjection, projectionDataFor, projectNote } from "../../core/src/project.js";
 export type { ProjectionData } from "../../core/src/project.js";
 
 export { exportGraphMl, exportJsonLd } from "../../core/src/export.js";

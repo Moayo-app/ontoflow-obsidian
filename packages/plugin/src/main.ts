@@ -79,6 +79,7 @@ import {
   flushPgCanonical,
   holdForLater,
   loadPgCanonical,
+  promoteProjectionEdits,
   runInitialIndex,
   runSynthesis,
   sendToHub,
@@ -501,28 +502,45 @@ export default class OntoFlowPlugin extends Plugin {
   ): Promise<void> {
     try {
       const change = await collectEvent(this.io, PLUGIN_VAULT_DIR, event);
-      await this.processChanges(change ? [change] : []);
+      await this.processChanges(change ? [change] : [], event);
     } catch (e) {
       new Notice(fmt(P.collectFailed, { msg: (e as Error).message }));
     }
   }
 
-  private async processChanges(changes: CollectedChange[]): Promise<void> {
-    if (changes.length === 0 || this.store === null) return;
+  private async processChanges(
+    changes: CollectedChange[],
+    event?: Parameters<typeof collectEvent>[2],
+  ): Promise<void> {
+    if (this.store === null) return;
     const onboarding = await loadOnboarding(this.io, PLUGIN_VAULT_DIR);
     // `§23` 동의 전 — 추출도 보류 적재도 없다 (AC2). 동의 뒤의 최초 색인이 전량을 따라잡는다.
     if (onboarding.consent === null) return;
     const registry = await loadRegistryFile(this.io, PLUGIN_VAULT_DIR);
-    await applyLocal(this.io, PLUGIN_VAULT_DIR, this.store, registry, changes);
-    try {
-      const dispatch = await sendToHub(this.io, PLUGIN_VAULT_DIR, this.store, registry, this.extractor(), changes);
-      this.surfaceBillingNotices(dispatch.notices); // 80/100% 거래 고지 — 「API 응답」 채널 (ISSUE-362)
-    } catch (e) {
-      // 허브가 안 닿거나 지갑이 닫혔다 — 추출 몫만 쌓인다 (#12 AC5). 로컬 효과는 이미 섰다.
-      await holdForLater(this.io, PLUGIN_VAULT_DIR, changes);
-      this.surfaceHold(e, changes.length); // 무언 보류 금지 (ISSUE-362) — 사유가 함께 선다
+    // 투영 편집 승격 (ISSUE-430) — 수집 산출과 독립으로 이벤트 원문에서: 블록만 고친 저장은
+    // 수집 산출이 0(본문 무변)이라, 산출에 매달면 바로 그 저장이 소리 없이 소실된다.
+    const promoted =
+      event !== undefined && event.kind !== "delete"
+        ? await promoteProjectionEdits(
+            this.store,
+            registry,
+            event.kind === "write" ? event.path : event.to,
+            event.content,
+          )
+        : null;
+    if (changes.length === 0 && promoted === null) return;
+    if (changes.length > 0) {
+      await applyLocal(this.io, PLUGIN_VAULT_DIR, this.store, registry, changes);
+      try {
+        const dispatch = await sendToHub(this.io, PLUGIN_VAULT_DIR, this.store, registry, this.extractor(), changes);
+        this.surfaceBillingNotices(dispatch.notices); // 80/100% 거래 고지 — 「API 응답」 채널 (ISSUE-362)
+      } catch (e) {
+        // 허브가 안 닿거나 지갑이 닫혔다 — 추출 몫만 쌓인다 (#12 AC5). 로컬 효과는 이미 섰다.
+        await holdForLater(this.io, PLUGIN_VAULT_DIR, changes);
+        this.surfaceHold(e, changes.length); // 무언 보류 금지 (ISSUE-362) — 사유가 함께 선다
+      }
     }
-    await this.persistCanonical(); // PG 정본 (#63) — 변경 반영
+    await this.persistCanonical(); // PG 정본 (#63) — 변경 반영 (승격만 있어도 민다)
     await this.resurfaceCycle(false); // 재부상 (#80) — 주기가 지났을 때만 돈다 (편승, 크론 0)
   }
 

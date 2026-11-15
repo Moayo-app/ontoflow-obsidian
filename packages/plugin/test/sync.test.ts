@@ -15,11 +15,12 @@ import { projectNoteCommand } from "../src/commands.js";
 import type { HubClient } from "../src/hub-client.js";
 import { PLUGIN_VAULT_DIR, obsidianFileIo } from "../src/obsidian-io.js";
 import { loadRegistryFile } from "../src/registry-io.js";
-import { reviewView, updateOnboarding } from "../src/screens.js";
+import { onboardingView, reviewView, updateOnboarding } from "../src/screens.js";
 import {
   applyLocal,
   collectEvent,
   holdForLater,
+  promoteProjectionEdits,
   runInitialIndex,
   sendToHub,
   takeHeld,
@@ -367,6 +368,49 @@ describe("수집 배선 — vault 왕복 (이슈 #42 AC1·AC2)", () => {
     expect(onboarding.completedAt).toBe("2026-11-01T00:00:00Z");
     expect(progressLabel(onboarding)).toBe("2/2");
   });
+
+  it("최초 색인 실패가 시작 전으로 원복되고, 재시도가 선다 (ISSUE-431 — 막다른 길 제거)", async () => {
+    const { io, registry } = await openTestVault();
+    await grantAll(io);
+    const notes = new Map([["스토아.md", { body: "에픽테토스는 스토아 철학을 대표한다.", mtime: 1 }]]);
+    let calls = 0;
+    const hub: HubClient = {
+      ...noSynthesis,
+      extractIncremental: async () => {
+        throw new Error("안 쓴다");
+      },
+      extractReindex: async () => {
+        calls += 1;
+        if (calls === 1) throw new Error("일시 오류"); // 허브 타임아웃 한 번 — 옛 코드는 여기서 영구 비활성이었다
+        return {
+          edges: [],
+          proposals: [],
+          held: [],
+          versions: { registry: registry.version, prompt: "p1" },
+          aliases: [],
+          merges: [],
+        };
+      },
+    };
+    await expect(
+      runInitialIndex(io, PLUGIN_VAULT_DIR, fakeReader(notes), registry, hub, "2026-11-01T00:00:00Z"),
+    ).rejects.toThrow("일시 오류");
+    const after = await loadOnboarding(io, PLUGIN_VAULT_DIR);
+    expect(after.indexing).toBeNull(); // 원복 — 「색인 시작」 버튼이 다시 선다
+    expect(onboardingView(after).canStartIndex).toBe(true);
+    expect(after.completedAt).toBeNull();
+
+    const result = await runInitialIndex(
+      io,
+      PLUGIN_VAULT_DIR,
+      fakeReader(notes),
+      registry,
+      hub,
+      "2026-11-02T00:00:00Z",
+    );
+    expect(result.total).toBe(1);
+    expect((await loadOnboarding(io, PLUGIN_VAULT_DIR)).completedAt).toBe("2026-11-02T00:00:00Z");
+  });
 });
 
 // ---- PG 정본 (#63) — 적재·반영의 플러그인 배선: 정본은 PG, 로컬은 세션 작업 사본 ----
@@ -565,5 +609,82 @@ describe("거래 고지 운반 (ISSUE-362)", () => {
       { kind: "write", note: "a.md", diff: "@@\n+한 줄." },
     ] as never);
     expect(dispatch.notices).toEqual(["usage-80"]);
+  });
+});
+
+describe("투영 편집 승격 배선 (ISSUE-430 — #10 AC18·AC3 「사용자 편집 항상 승」)", () => {
+  it("블록만 고친 저장(수집 산출 0)이 by:user 로 승격되고, 재투영·재추출이 그 값을 지킨다", async () => {
+    const { io, store, registry } = await openTestVault();
+    const { applyPatch, parseProjection } = await import("../src/core.js");
+    const note = "수면.md";
+    const auto = (confidence: number) => ({
+      s: "수면",
+      v: "causes",
+      o: "입면 지연",
+      confidence,
+      fallback: false,
+      by: "auto" as const,
+      src: { note, origin: "extract" as const },
+    });
+    await applyPatch(store, registry, { add: [auto(0.9)], retract: [] });
+    await io.writeText(note, "수면에 관한 노트.");
+    expect((await projectNoteCommand(io, PLUGIN_VAULT_DIR, store, note)).changed).toBe(true);
+
+    const projected = (await io.readText(note)) ?? "";
+    // 투영된 그대로를 한 번 수집해 추적을 세운다 — 다음 저장의 「산출 0」이 실측되게.
+    await collectEvent(io, PLUGIN_VAULT_DIR, {
+      kind: "write",
+      path: note,
+      content: projected,
+      stat: { mtime: 1, size: projected.length },
+    });
+    const edited = projected.replace("confidence: 0.9", "confidence: 0.4");
+    expect(edited).not.toBe(projected);
+    const change = await collectEvent(io, PLUGIN_VAULT_DIR, {
+      kind: "write",
+      path: note,
+      content: edited,
+      stat: { mtime: 2, size: edited.length },
+    });
+    expect(change).toBeNull(); // 본문(투영 제거본) 무변 — 수집에 매달면 바로 이 저장이 소실된다
+
+    const patch = await promoteProjectionEdits(store, registry, note, edited);
+    expect(patch).not.toBeNull();
+    expect(projectionDataFor(store, note).edges[0]).toMatchObject({ by: "user", confidence: 0.4 });
+
+    // 재투영이 승격 값을 되비춘다 — 편집이 소리 없이 되덮이던 옛 경로의 역전.
+    await projectNoteCommand(io, PLUGIN_VAULT_DIR, store, note);
+    const reread = parseProjection((await io.readText(note)) ?? "");
+    expect(reread?.edges[0]).toMatchObject({ by: "user", confidence: 0.4 });
+
+    // 재추출(auto)이 같은 논리 엣지를 밀어도 사용자 승이 막는다.
+    const re = await applyPatch(store, registry, { add: [auto(0.95)], retract: [] });
+    expect(re.skipped).toBe(1);
+    expect(projectionDataFor(store, note).edges[0]).toMatchObject({ by: "user", confidence: 0.4 });
+  });
+
+  it("블록 없음(투영 전)·무변 블록은 승격 0 이다", async () => {
+    const { io, store, registry } = await openTestVault();
+    const { applyPatch } = await import("../src/core.js");
+    expect(await promoteProjectionEdits(store, registry, "없음.md", "그냥 본문")).toBeNull();
+    const note = "수면.md";
+    await applyPatch(store, registry, {
+      add: [
+        {
+          s: "수면",
+          v: "causes",
+          o: "입면 지연",
+          confidence: 0.9,
+          fallback: false,
+          by: "auto",
+          src: { note, origin: "extract" },
+        },
+      ],
+      retract: [],
+    });
+    await io.writeText(note, "본문.");
+    await projectNoteCommand(io, PLUGIN_VAULT_DIR, store, note);
+    const untouched = (await io.readText(note)) ?? "";
+    expect(await promoteProjectionEdits(store, registry, note, untouched)).toBeNull(); // 무변 — 패치 0
   });
 });

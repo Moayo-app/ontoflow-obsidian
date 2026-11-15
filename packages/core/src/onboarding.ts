@@ -80,6 +80,16 @@ export function recordIndexProgress(
   return { ...state, indexing, completedAt: done ? state.completedAt ?? now : state.completedAt };
 }
 
+/**
+ * 실패 원복 (ISSUE-431) — 시작 표식만 남으면 「색인 시작」 버튼이 영구 비활성이다(막다른 길):
+ * 추출·교체가 실패하면 시작 전 상태로 되돌려 재시도의 문을 연다. 완료 기록(completedAt)은
+ * 건드리지 않는다 — 완료 뒤의 재색인 실패도 완료 사실을 지우지 않는다.
+ */
+export function abortInitialIndex(state: OnboardingState): OnboardingState {
+  if (state.indexing === null) return state;
+  return { ...state, indexing: null };
+}
+
 // 화면이 그릴 진행 표기 — 처리/전체 (AC1).
 export function progressLabel(state: OnboardingState): string {
   if (state.indexing === null) return "색인 전";

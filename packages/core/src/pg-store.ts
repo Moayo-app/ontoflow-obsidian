@@ -27,8 +27,12 @@ export class PgStoreError extends Error {
 
 // ---- 스키마 이름 (#53 조직 결의 ⓒ) ----
 
-/** 개인 `ontoflow` 또는 조직 구성원 `ontoflow_<구성원>` — 그 밖은 최소 스코프 초과다. */
-export const CANONICAL_SCHEMA_SHAPE = /^ontoflow(_[a-z0-9][a-z0-9_-]{0,60})?$/;
+/**
+ * 개인 `ontoflow` 또는 조직 구성원 `ontoflow_<구성원>` — 그 밖은 최소 스코프 초과다.
+ * ⚠️ 하이픈 불허 (#426) — 스키마는 SQL 에 비인용 식별자로 보간되는데 PostgreSQL 비인용
+ * 식별자는 하이픈을 받지 않는다. 계정 id(UUID)의 하이픈은 memberSchema 가 접는다.
+ */
+export const CANONICAL_SCHEMA_SHAPE = /^ontoflow(_[a-z0-9][a-z0-9_]{0,60})?$/;
 
 export function assertCanonicalSchema(schema: string): void {
   if (!CANONICAL_SCHEMA_SHAPE.test(schema)) {
@@ -43,9 +47,13 @@ export function assertCanonicalSchema(schema: string): void {
 /** 조직 공용 스키마 (#191 ② — 등록부·사건 로그의 자리). 멤버 스키마가 아니다. */
 export const ORG_SCHEMA = "ontoflow_org";
 
-/** 계정 id → 멤버 스키마 이름. 규칙은 CANONICAL_SCHEMA_SHAPE 하나 + 공용 자리 예약이다. */
+/**
+ * 계정 id → 멤버 스키마 이름. 규칙은 CANONICAL_SCHEMA_SHAPE 하나 + 공용 자리 예약이다.
+ * 계정 id 는 UUID(하이픈 포함)라 그대로는 비인용 식별자가 못 된다 — 하이픈만 `_` 로 접는다
+ * (#426 · 스키마 모양 결의 #53 ⓒ 무변). UUID 에는 `_` 가 없어 접힘이 충돌을 만들지 않는다.
+ */
 export function memberSchema(accountId: string): string {
-  const id = accountId.trim().toLowerCase();
+  const id = accountId.trim().toLowerCase().replace(/-/g, "_");
   const schema = `ontoflow_${id}`;
   if (id.length === 0 || !CANONICAL_SCHEMA_SHAPE.test(schema)) {
     throw new PgStoreError(422, [`멤버 스키마를 만들 수 없는 계정 id 다: ${JSON.stringify(accountId)}`]);

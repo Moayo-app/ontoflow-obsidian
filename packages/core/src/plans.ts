@@ -177,8 +177,12 @@ export interface Plan {
  * ⭐ 정본. 순서가 화면 순서이고, 그것이 곧 **등급 순서**다 (`rankOf`).
  *
  * ⚠️ 크레딧 값(`monthlyCredits`)은 가격과 함께 **결의됐다** (#193·#197, 2026-11-06) —
- *    Free 30 · Standard 2,000 · Pro 무제한 · Team 3층 동형. 🔁 재론은 노트당 한계원가
- *    실측(#18)·실제 전환율이 설 때 — 가격과 같은 재론 조건이다.
+ *    Free 30 · Standard 2,000 · Team 3층 동형. ⭕ **#193 재개정 (2026-11-15)**: Pro·Team Pro
+ *    무제한 → **6,000**(멤버당 풀 동형) — 출시 가격이 코호트에 영구(제8조⑦)라 가장 후한 값은
+ *    되돌릴 수 없는 베팅이었다: 상한은 올리는 개정만 전 코호트에 가능하다. 6,000 은 체감
+ *    무제한(하루 ~200노트 변경)이고, 꼬리(무계 재색인·어뷰즈)만 팩($15/1,000)으로 돌린다.
+ *    전체 재색인은 소비 0 그대로다(billing `initial-index` 분기 — 프롬프트 버전업 재색인 포함).
+ *    🔁 재론은 노트당 한계원가 실측(#18)·실제 전환율이 설 때 — 가격과 같은 재론 조건이다.
  */
 export const PLANS: readonly Plan[] = [
   {
@@ -209,10 +213,10 @@ export const PLANS: readonly Plan[] = [
   {
     id: "pro",
     name: "Pro",
-    blurb: "크레딧 무제한과 원격 MCP — 외부 AI 도구까지 그래프에 연결됩니다.",
-    blurbEn: "Unlimited credits and remote MCP — connect external AI tools to your graph.",
+    blurb: "월 6,000크레딧과 원격 MCP — 외부 AI 도구까지 그래프에 연결됩니다.",
+    blurbEn: "6,000 credits a month and remote MCP — connect external AI tools to your graph.",
     price: { kind: "set", monthlyUsd: 29 },
-    monthlyCredits: null, // 무제한
+    monthlyCredits: 6000, // ⭕ #193 재개정 (2026-11-15) — 무제한 → 6,000 (머리주석)
     reindex: true,
     remoteMcp: true, // ⭐ 상위 층의 차별점 (#81)
     subscribable: true,
@@ -248,10 +252,10 @@ export const PLANS: readonly Plan[] = [
   {
     id: "team-pro",
     name: "Team Pro",
-    blurb: "크레딧 무제한, SSO·SCIM — 모든 기능이 포함됩니다.",
-    blurbEn: "Unlimited credits, SSO and SCIM — everything included.",
+    blurb: "멤버당 월 6,000크레딧 풀, SSO·SCIM — 모든 기능이 포함됩니다.",
+    blurbEn: "A pool of 6,000 credits per member a month, SSO and SCIM — everything included.",
     price: { kind: "set", monthlyUsd: 40 },
-    monthlyCredits: null,
+    monthlyCredits: 6000, // ⭕ #193 재개정 (2026-11-15) — 무제한 → 멤버당 6,000 풀
     reindex: true,
     remoteMcp: true,
     subscribable: false,
