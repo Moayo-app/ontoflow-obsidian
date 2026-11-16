@@ -37,7 +37,7 @@ export type {
 } from "../../core/src/store.js";
 
 // API 소스 오케스트레이션 (ISSUE-364) — 분모는 허브 금고의 연결, 전송은 주입(main 이 조립).
-export { collectApiSource, isApiSourceKind } from "../../core/src/api-sources.js";
+export { collectApiSource, collectGitHubSources, isApiSourceKind } from "../../core/src/api-sources.js";
 export type { ApiSourceKind, IngestPull } from "../../core/src/api-sources.js";
 
 export { designateHome } from "../../core/src/home.js";

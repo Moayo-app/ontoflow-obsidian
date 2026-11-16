@@ -7,6 +7,7 @@ import {
   SUPERCLASSES,
   chooseVault,
   collectApiSource,
+  collectGitHubSources,
   collectRegisteredSources,
   isApiSourceKind,
   firstIndexHighlights,
@@ -41,7 +42,7 @@ import {
   type Superclass,
   type VaultReader,
 } from "./core.js";
-import { HubClientError, hubClient, type Extractor, type HubClient } from "./hub-client.js";
+import { HubClientError, hubClient, type Extractor, type HubClient, type IngestSourcesInfo } from "./hub-client.js";
 import { obsidianFetch } from "./net.js";
 
 // 문구 한 벌 (ISSUE-368) — 로케일은 로드 시 한 번: 옵시디언 언어 변경은 재시작을 동반한다.
@@ -353,23 +354,39 @@ export default class OntoFlowPlugin extends Plugin {
   // 소스를 당긴다 — 트리거는 멤버 세션이다(허브 타이머 비채택: 보관 0 · 상시 표면 +0).
   private async collectApiSources(verbose: boolean): Promise<void> {
     if (this.store === null) return;
-    let kinds: string[];
+    let info: IngestSourcesInfo;
     try {
-      kinds = await this.hub().ingestSources();
+      info = await this.hub().ingestSources();
     } catch (e) {
       // 허브 미연결(주소·키 없음)이면 API 소스도 없다 — 시작 사이클에서는 조용히 쉰다.
       if (verbose) new Notice(fmt(P.sourceListFailed, { msg: (e as Error).message }));
       return;
     }
-    for (const kind of kinds.filter(isApiSourceKind)) {
+    for (const kind of info.kinds.filter(isApiSourceKind)) {
       if (this.settings.sources.some((s) => s.id === kind)) {
         new Notice(fmt(P.sourceIdCollision, { id: kind }));
         continue;
       }
       try {
-        const changes = await collectApiSource(this.io, PLUGIN_VAULT_DIR, kind, (k, known) =>
-          this.hub().ingestPull(k, known),
-        );
+        let changes: CollectedChange[];
+        if (kind === "github" && info.githubAnchors.length > 0) {
+          // 복수 닻 (ISSUE-482) — 저장소 = 소스: 저장소별로 당기고 실패를 격리한다. 실패
+          // 저장소는 그 소스의 reconcile 이 돌지 않아 삭제 오판이 없고, 안내가 저장소명을 짚는다.
+          const r = await collectGitHubSources(
+            this.io,
+            PLUGIN_VAULT_DIR,
+            info.githubAnchors,
+            info.githubPrimary,
+            (k, known, anchor) => this.hub().ingestPull(k, known, anchor),
+          );
+          for (const p of r.problems) new Notice(fmt(P.apiSourceFailed, { kind, msg: p }));
+          changes = r.changes;
+        } else {
+          // 닻 목록이 비면(구 허브) 종전 단일 소스 길 그대로 — 조용한 0 수집으로 바꾸지 않는다.
+          changes = await collectApiSource(this.io, PLUGIN_VAULT_DIR, kind, (k, known) =>
+            this.hub().ingestPull(k, known),
+          );
+        }
         await this.processChanges(changes);
         if (verbose) new Notice(fmt(P.apiSourceCollected, { kind, n: changes.length }));
         const touched = [...new Set(changes.map((c) => c.note.split(":/")[0] ?? ""))].filter((s) => s !== "");

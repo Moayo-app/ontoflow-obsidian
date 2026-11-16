@@ -137,10 +137,23 @@ describe("API 소스 수집 호출 (ISSUE-364)", () => {
   it("ingestSources 는 kinds 를 추리고, 워크스페이스 문맥이면 orgId 가 실린다", async () => {
     const { calls, fetchFn } = captureFetch(200, JSON.stringify({ kinds: ["notion", "jira"] }));
     const hub = hubClient("https://hub.test", async () => "tok", fetchFn, () => "org-1");
-    const kinds = await hub.ingestSources();
-    expect(kinds).toEqual(["notion", "jira"]);
+    const info = await hub.ingestSources();
+    expect(info.kinds).toEqual(["notion", "jira"]);
+    expect(info.githubAnchors).toEqual([]); // github 비연결 — 빈 목록·빈 승계 (ISSUE-482)
+    expect(info.githubPrimary).toBe("");
     expect(calls[0]!.url).toBe("https://hub.test/v1/ingest/sources");
     expect((JSON.parse(calls[0]!.init.body ?? "{}") as { orgId?: string }).orgId).toBe("org-1");
+  });
+
+  it("ingestSources 는 github 닻 목록·승계 닻을 함께 나른다 (ISSUE-482)", async () => {
+    const { fetchFn } = captureFetch(
+      200,
+      JSON.stringify({ kinds: ["github"], github: { anchors: ["a/b", "c/d"], primary: "a/b" } }),
+    );
+    const hub = hubClient("https://hub.test", async () => "tok", fetchFn);
+    const info = await hub.ingestSources();
+    expect(info.githubAnchors).toEqual(["a/b", "c/d"]);
+    expect(info.githubPrimary).toBe("a/b");
   });
 
   it("ingestPull 은 kind 라우트에 known 을 싣는다", async () => {
@@ -148,9 +161,18 @@ describe("API 소스 수집 호출 (ISSUE-364)", () => {
     const hub = hubClient("https://hub.test", async () => "tok", fetchFn);
     await hub.ingestPull("notion", { p1: 1000 });
     expect(calls[0]!.url).toBe("https://hub.test/v1/ingest/notion");
-    const body = JSON.parse(calls[0]!.init.body ?? "{}") as { known: unknown; orgId?: string };
+    const body = JSON.parse(calls[0]!.init.body ?? "{}") as { known: unknown; orgId?: string; anchor?: string };
     expect(body.known).toEqual({ p1: 1000 });
     expect(body.orgId).toBeUndefined(); // 개인 문맥 — orgId 없음
+    expect(body.anchor).toBeUndefined(); // 닻 미지정 — 필드 자체가 없다
+  });
+
+  it("ingestPull 은 anchor 를 지정하면 함께 싣는다 (ISSUE-482)", async () => {
+    const { calls, fetchFn } = captureFetch(200, JSON.stringify({ items: [] }));
+    const hub = hubClient("https://hub.test", async () => "tok", fetchFn);
+    await hub.ingestPull("github", { cursor: null, files: {} }, "a/b");
+    const body = JSON.parse(calls[0]!.init.body ?? "{}") as { anchor?: string };
+    expect(body.anchor).toBe("a/b");
   });
 });
 

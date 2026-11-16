@@ -65,6 +65,13 @@ export interface Extractor {
   extractReindex(call: ReindexCall): Promise<PipelineReindexResponse>;
 }
 
+/** 연결된 수집 소스 응답 (ISSUE-482) — github 닻이 비면 anchors 는 빈 목록, primary 는 빈 문자열. */
+export interface IngestSourcesInfo {
+  kinds: string[];
+  githubAnchors: string[];
+  githubPrimary: string;
+}
+
 /** 내 워크스페이스 한 줄 (GET /v1/orgs 꼴의 부분) — 설정 탭 전환기의 재료다. */
 export interface WorkspaceSummary {
   orgId: string;
@@ -114,9 +121,11 @@ export interface HubClient extends Extractor {
   ping(): Promise<void>;
   /** 동기화 집행 (ISSUE-372 — 출고 표면) — 델타·매핑을 싣고 허브 판정 결과를 받는다. 크레딧 비소비(내보내기). */
   projectTo(dest: "notion" | "postgres", input: unknown): Promise<ProjectionWire>;
-  ingestSources(): Promise<string[]>;
-  /** API 소스 한 종의 pull — known(증분 선별 재료)을 싣고 pull 결과(JSON)를 받는다. */
-  ingestPull(kind: string, known: unknown): Promise<unknown>;
+  /** 연결된 수집 소스 — kinds 는 종전 그대로, github 닻 목록(ISSUE-482)이 곁에 실린다. */
+  ingestSources(): Promise<IngestSourcesInfo>;
+  /** API 소스 한 종의 pull — known(증분 선별 재료)을 싣고 pull 결과(JSON)를 받는다.
+   * anchor 는 복수 닻 kind(github — ISSUE-482)의 저장소 지정이다. */
+  ingestPull(kind: string, known: unknown, anchor?: string): Promise<unknown>;
 }
 
 // 전송은 주입이다 — 기본값 `fetch` 를 두지 않는다 (#105): 플러그인 출처의 fetch 는 CORS 를
@@ -190,10 +199,19 @@ export function hubClient(
     },
     projectTo: (dest, input) => post<ProjectionWire>(`/v1/project/${dest}`, input),
     ingestSources: async () => {
-      const doc = await post<{ kinds?: unknown }>("/v1/ingest/sources", billed({}));
-      return Array.isArray(doc.kinds) ? doc.kinds.filter((k): k is string => typeof k === "string") : [];
+      const doc = await post<{ kinds?: unknown; github?: { anchors?: unknown; primary?: unknown } }>(
+        "/v1/ingest/sources",
+        billed({}),
+      );
+      const anchors = Array.isArray(doc.github?.anchors) ? doc.github.anchors : [];
+      return {
+        kinds: Array.isArray(doc.kinds) ? doc.kinds.filter((k): k is string => typeof k === "string") : [],
+        githubAnchors: anchors.filter((a): a is string => typeof a === "string"),
+        githubPrimary: typeof doc.github?.primary === "string" ? doc.github.primary : "",
+      };
     },
-    ingestPull: (kind, known) => post(`/v1/ingest/${kind}`, billed({ known })),
+    ingestPull: (kind, known, anchor) =>
+      post(`/v1/ingest/${kind}`, billed(anchor === undefined ? { known } : { known, anchor })),
     listWorkspaces: async () => {
       const doc = await call<{ orgs?: { orgId?: unknown; name?: unknown; role?: unknown }[] }>("GET", "/v1/orgs");
       return (doc.orgs ?? []).map((o) => ({
