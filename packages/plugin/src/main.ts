@@ -45,8 +45,9 @@ import { HubClientError, hubClient, type Extractor, type HubClient } from "./hub
 import { obsidianFetch } from "./net.js";
 
 // 문구 한 벌 (ISSUE-368) — 로케일은 로드 시 한 번: 옵시디언 언어 변경은 재시작을 동반한다.
-// getLanguage 는 옵시디언 1.8+ — minAppVersion(1.8.0) 플로어 안이다. typeof 가드는 바인딩을
-// 안 드는 테스트 더블(모의 obsidian 모듈)의 방어다.
+// getLanguage 는 @since 1.8.7 — minAppVersion(1.8.7) 플로어 안이다(도입 버전의 정본은 d.ts 의
+// @since, 패치 버전까지 — 1.8.0 선언은 심사 Error 였다). typeof 가드는 바인딩을 안 드는
+// 테스트 더블(모의 obsidian 모듈)의 방어다.
 const P = pluginStrings(typeof getLanguage === "function" ? getLanguage() : "en");
 
 // 확신 밴드 (ISSUE-372) — 경계는 추출 게이트의 관례(0.8 고확신)와 0.5 중간선이다.
