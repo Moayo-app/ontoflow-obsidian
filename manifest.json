@@ -1,8 +1,8 @@
 {
   "id": "ontoflow",
   "name": "OntoFlow",
-  "version": "1.0.3",
-  "minAppVersion": "1.5.0",
+  "version": "1.0.4",
+  "minAppVersion": "1.8.0",
   "description": "Resurface contradictions, gaps, and forgotten connections from your notes. Keep your knowledge in a database you own, where any LLM can build on it. Extraction is automatic, decisions are yours.",
   "author": "Moayo",
   "authorUrl": "https://ontoflow.app",

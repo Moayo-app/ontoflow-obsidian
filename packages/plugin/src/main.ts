@@ -45,7 +45,8 @@ import { HubClientError, hubClient, type Extractor, type HubClient } from "./hub
 import { obsidianFetch } from "./net.js";
 
 // 문구 한 벌 (ISSUE-368) — 로케일은 로드 시 한 번: 옵시디언 언어 변경은 재시작을 동반한다.
-// getLanguage 는 옵시디언 1.8+ 다 — minAppVersion(1.5.0) 아래 구판에선 바인딩이 비어 en 으로 선다.
+// getLanguage 는 옵시디언 1.8+ — minAppVersion(1.8.0) 플로어 안이다. typeof 가드는 바인딩을
+// 안 드는 테스트 더블(모의 obsidian 모듈)의 방어다.
 const P = pluginStrings(typeof getLanguage === "function" ? getLanguage() : "en");
 
 // 확신 밴드 (ISSUE-372) — 경계는 추출 게이트의 관례(0.8 고확신)와 0.5 중간선이다.
@@ -104,7 +105,7 @@ export default class OntoFlowPlugin extends Plugin {
   // 이벤트 대기열 (#439 ①·②) — 디바운스 버퍼이자 store 준비 전 보류함: 수집 상태에 박는
   // 것은 플러시 때뿐이라, 플러시 전에 날아간 몫은 다음 시작 따라잡기가 되줍는다 (유실 0).
   private pendingEvents: VaultEvent[] = [];
-  private flushTimer: ReturnType<typeof setTimeout> | null = null;
+  private flushTimer: number | null = null;
   private firstQueuedAt: number | null = null;
   private flushing = false;
   private deferNoticeShown = false;
@@ -519,8 +520,8 @@ export default class OntoFlowPlugin extends Plugin {
   private queueEvent(event: VaultEvent): void {
     if (this.pendingEvents.length === 0) this.firstQueuedAt = Date.now();
     this.pendingEvents.push(event);
-    if (this.flushTimer !== null) clearTimeout(this.flushTimer);
-    this.flushTimer = setTimeout(
+    if (this.flushTimer !== null) window.clearTimeout(this.flushTimer);
+    this.flushTimer = window.setTimeout(
       () => void this.flushEvents(),
       nextFlushDelay(this.firstQueuedAt ?? Date.now(), Date.now()),
     );
@@ -528,13 +529,13 @@ export default class OntoFlowPlugin extends Plugin {
 
   private async flushEvents(): Promise<void> {
     if (this.flushTimer !== null) {
-      clearTimeout(this.flushTimer);
+      window.clearTimeout(this.flushTimer);
       this.flushTimer = null;
     }
     if (this.pendingEvents.length === 0) return;
     if (this.flushing) {
       // 플러시 중 재진입 — 끝난 뒤 조용 창으로 다시 잡는다 (이벤트 유실 0).
-      this.flushTimer = setTimeout(() => void this.flushEvents(), EVENT_QUIET_MS);
+      this.flushTimer = window.setTimeout(() => void this.flushEvents(), EVENT_QUIET_MS);
       return;
     }
     if (this.store === null) {
@@ -562,7 +563,7 @@ export default class OntoFlowPlugin extends Plugin {
 
   override onunload(): void {
     // 플러시 전 대기분은 수집 상태 미기록이다 — 다음 시작의 따라잡기가 되줍는다 (#439 ① 유실 0).
-    if (this.flushTimer !== null) clearTimeout(this.flushTimer);
+    if (this.flushTimer !== null) window.clearTimeout(this.flushTimer);
   }
 
   private async processChanges(
