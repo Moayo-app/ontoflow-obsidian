@@ -14,6 +14,7 @@ import {
   type CollectedChange,
   type VaultReader,
 } from "./collect.js";
+import { sliceAtCodePoint } from "./capture.js";
 import { resolveHome, type FileIo } from "./store.js";
 
 export class IngestError extends Error {
@@ -108,7 +109,7 @@ export function sourceKnownStats(state: CollectState, sourceId: string): Record<
  * 항목 id 가 충돌을 막는다. OneNote(#56)·Evernote(#57)가 같은 꼴을 쓴다.
  */
 export function sourceEntryPath(entry: { id: string; title: string }): string {
-  const title = entry.title.replace(/[\\/:#^[\]|?*]/g, " ").replace(/\s+/g, " ").trim().slice(0, 120);
+  const title = sliceAtCodePoint(entry.title.replace(/[\\/:#^[\]|?*]/g, " ").replace(/\s+/g, " ").trim(), 120);
   return `${entry.id}/${title === "" ? "무제" : title}.md`;
 }
 

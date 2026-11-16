@@ -22,6 +22,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write # gh release create
+      id-token: write # 산출물 증명 (artifact attestation)
+      attestations: write
     steps:
       - uses: actions/checkout@v4
 
@@ -61,6 +63,17 @@ jobs:
           ls -la
 
       - run: pnpm --filter @ontoflow/plugin smoke
+
+      # 산출물 증명 (옵시디언 심사 Releases 권고) — 「이 main.js 는 이 리포 이 커밋에서 CI 가
+      # 빌드했다」를 암호학적으로 증명한다. 검증: gh attestation verify main.js --repo <owner/repo>.
+      # 릴리스 자산은 반드시 이 워크플로 산출만 올린다 — 손 업로드는 증명·재현 대조를 둘 다 깬다.
+      - name: 산출물 증명
+        if: github.event_name == 'push'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            packages/plugin/dist/main.js
+            packages/plugin/dist/manifest.json
 
       - name: 초안 릴리스
         if: github.event_name == 'push'

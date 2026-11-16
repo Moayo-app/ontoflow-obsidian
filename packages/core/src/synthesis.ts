@@ -35,12 +35,12 @@ export interface SynthesisInput {
   edges: SynthesisEdge[];
 }
 
-function all(store: GraphStore, sql: string, params: unknown[]): Record<string, unknown>[] {
+function all(store: GraphStore, sql: string, params: (string | number)[]): Record<string, unknown>[] {
   const stmt = store.db.prepare(sql);
   try {
-    stmt.bind(params as never);
+    stmt.bind(params);
     const rows: Record<string, unknown>[] = [];
-    while (stmt.step()) rows.push(stmt.getAsObject() as Record<string, unknown>);
+    while (stmt.step()) rows.push(stmt.getAsObject());
     return rows;
   } finally {
     stmt.free();

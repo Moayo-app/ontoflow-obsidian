@@ -136,20 +136,28 @@ export async function pullGDriveChanges(
   folderId: string,
   known: GDriveKnown,
 ): Promise<GDrivePull> {
-  let cursor: string;
+  let cursor: string | null = null;
   if (known.cursor !== null) {
-    let changeCount = 0;
-    let token: string | undefined = known.cursor;
-    let newStart: string | undefined;
-    while (token !== undefined) {
-      const page: DriveChangesPage = await client.listChanges(token);
-      changeCount += page.changeCount;
-      newStart = page.newStartPageToken ?? newStart;
-      token = page.nextPageToken;
+    try {
+      let changeCount = 0;
+      let token: string | undefined = known.cursor;
+      let newStart: string | undefined;
+      while (token !== undefined) {
+        const page: DriveChangesPage = await client.listChanges(token);
+        changeCount += page.changeCount;
+        newStart = page.newStartPageToken ?? newStart;
+        token = page.nextPageToken;
+      }
+      cursor = newStart ?? known.cursor;
+      if (changeCount === 0) return { cursor, unchanged: true, files: [], skippedBinaries: 0 };
+    } catch (e) {
+      // 커서 만료 (#441) — changes 페이지 토큰은 영원하지 않다: Google 이 410 으로 버린 커서는
+      // 영원히 실패라, 그대로 던지면 이 소스의 증분이 영구 불능이다. 첫 수집 꼴로 접는다 —
+      // 새 기준점을 받고 전체를 걷되, 본문 호출은 known.files 스탯 대조가 변경분으로 좁힌다.
+      if (!(e instanceof GDriveApiError) || e.status !== 410) throw e;
     }
-    cursor = newStart ?? known.cursor;
-    if (changeCount === 0) return { cursor, unchanged: true, files: [], skippedBinaries: 0 };
-  } else {
+  }
+  if (cursor === null) {
     cursor = await client.getStartPageToken(); // 목록보다 먼저 — 걷는 동안의 변경은 다음 수집이 줍는다
   }
 

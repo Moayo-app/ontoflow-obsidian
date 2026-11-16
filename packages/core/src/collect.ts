@@ -69,17 +69,26 @@ export function emptyCollectState(): CollectState {
 
 export async function loadCollectState(io: FileIo, vaultDir: string): Promise<CollectState> {
   const home = await resolveHome(io, vaultDir);
-  const text = await io.readText(`${home.dir}/${COLLECT_STATE_FILE}`);
+  const path = `${home.dir}/${COLLECT_STATE_FILE}`;
+  const text = await io.readText(path);
   if (text === null) return emptyCollectState();
+  // 손상 자가 복구 (#441) — 깨진 상태 파일이 throw 로 남으면 **매 주기 같은 Notice** 가 서고
+  // 수집이 영구 정지한다(복구 커맨드도 없었다). 원본은 지우지 않고 `.corrupt` 로 밀어 둔 뒤
+  // (조용한 삭제 0 — vault 안에 실물이 남는다) 빈 상태로 새로 시작한다: 비용은 전량 재대조
+  // 1회이고, 같은 달 재추출 과금은 무소비 장부(#193 유지권)가 막는다.
+  const recover = async (): Promise<CollectState> => {
+    await io.rename(path, `${path}.corrupt`);
+    return emptyCollectState();
+  };
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
-  } catch (e) {
-    throw new CollectError([`collect.json 이 JSON 이 아니다: ${(e as Error).message}`]);
+  } catch {
+    return recover();
   }
   const state = parsed as CollectState;
   if (state?.schema !== COLLECT_SCHEMA_VERSION || typeof state.files !== "object" || state.files === null) {
-    throw new CollectError([`collect.json 스키마가 맞지 않는다 (기대 ${COLLECT_SCHEMA_VERSION})`]);
+    return recover();
   }
   return state;
 }

@@ -79,7 +79,8 @@ export interface ProjectionWire {
   syncedLocalIds: string[];
   removedLocalIds: string[];
   held?: { localId: string; reason: string }[];
-  failure: unknown | null;
+  /** 실패 재료 — null = 실패 없음 (unknown 이 null 을 이미 품으므로 유니언을 따로 적지 않는다). */
+  failure: unknown;
 }
 
 export interface HubClient extends Extractor {
@@ -187,7 +188,7 @@ export function hubClient(
     ping: async () => {
       await call("GET", "/v1/account");
     },
-    projectTo: (dest, input) => post<ProjectionWire>(`/v1/project/${dest}`, input as Record<string, unknown>),
+    projectTo: (dest, input) => post<ProjectionWire>(`/v1/project/${dest}`, input),
     ingestSources: async () => {
       const doc = await post<{ kinds?: unknown }>("/v1/ingest/sources", billed({}));
       return Array.isArray(doc.kinds) ? doc.kinds.filter((k): k is string => typeof k === "string") : [];

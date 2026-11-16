@@ -189,7 +189,7 @@ export function configureSqlJs(config: SqlJsConfig): void {
 }
 
 function loadSqlJs(): Promise<SqlJsStatic> {
-  sqlJs ??= initSqlJs(sqlJsConfig as Parameters<typeof initSqlJs>[0]);
+  sqlJs ??= initSqlJs(sqlJsConfig);
   return sqlJs;
 }
 

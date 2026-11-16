@@ -1,6 +1,6 @@
 // 옵시디언 진입점 — 조립만 한다: 수집(F1) 배선 · S1/S2 화면 · 커맨드 · 설정 (이슈 #42).
 // 판단은 전부 코어와 뷰모델(screens·sync·commands)에 있다 — 이 파일은 옵시디언 API 와의 접착뿐이다.
-import { Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, type App } from "obsidian";
+import { Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, getLanguage, type App } from "obsidian";
 import {
   FALLBACK_VERB_ID,
   SOURCE_KINDS,
@@ -45,7 +45,8 @@ import { HubClientError, hubClient, type Extractor, type HubClient } from "./hub
 import { obsidianFetch } from "./net.js";
 
 // 문구 한 벌 (ISSUE-368) — 로케일은 로드 시 한 번: 옵시디언 언어 변경은 재시작을 동반한다.
-const P = pluginStrings();
+// getLanguage 는 옵시디언 1.8+ 다 — minAppVersion(1.5.0) 아래 구판에선 바인딩이 비어 en 으로 선다.
+const P = pluginStrings(typeof getLanguage === "function" ? getLanguage() : "en");
 
 // 확신 밴드 (ISSUE-372) — 경계는 추출 게이트의 관례(0.8 고확신)와 0.5 중간선이다.
 const confidenceBand = (v: number): string => (v >= 0.8 ? P.confidenceHigh : v >= 0.5 ? P.confidenceMid : P.confidenceLow);
@@ -689,6 +690,9 @@ export default class OntoFlowPlugin extends Plugin {
 
 // ---- S1 — 온보딩 모달: 허브 연결 → vault 선택 → `§23` 동의 → 최초 색인 (동의 전 시작 비활성, AC2) ----
 
+// 허브 주소 미설정 상태(첫 설치)의 콘솔 딥링크 목적지 — 설정이 서면 그 주소가 이긴다 (#441).
+const HUB_CONSOLE_FALLBACK = "https://hub.ontoflow.app";
+
 class OnboardingModal extends Modal {
   constructor(
     app: App,
@@ -710,6 +714,23 @@ class OnboardingModal extends Modal {
     new Setting(contentEl)
       .setName(fmt(P.stepHubConnect, { state: view.hubConnected ? "✓" : P.notYetSuffix }))
       .setDesc(P.stepHubConnectDesc)
+      // 딥링크 둘 (#441) — 「설정 탭에서 넣어 주세요」가 길 없는 안내였다: 설정이 비면
+      // 연결 확인 버튼은 비활성인데, 그 설정으로 가는 손잡이가 모달 안에 없었다.
+      .addButton((b) =>
+        b.setButtonText(P.openHubConsoleBtn).onClick(() => {
+          // API 키가 발급되는 자리 — 주소 설정 전이니 공개 콘솔이 폴백이다.
+          const base = this.plugin.settings.hubBaseUrl.trim().replace(/\/+$/, "");
+          window.open(`${base === "" ? HUB_CONSOLE_FALLBACK : base}/console`, "_blank");
+        }),
+      )
+      .addButton((b) =>
+        b.setButtonText(P.openSettingsBtn).onClick(() => {
+          // 설정 패널은 공개 타입에 없다(커뮤니티 플러그인 통용 우회) — 탭 id = manifest id.
+          const setting = (this.app as unknown as { setting: { open(): void; openTabById(id: string): void } }).setting;
+          setting.open();
+          setting.openTabById("ontoflow");
+        }),
+      )
       .addButton((b) =>
         b
           .setButtonText(P.checkConnectionBtn)

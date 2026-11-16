@@ -137,12 +137,22 @@ export function exportJsonLd(store: GraphStore, registry: Registry): string {
 
 // ---- GraphML — superclass·confidence·fallback·by 를 속성으로 (AC4) ----
 
+// XML 1.0 이 허용하지 않는 제어문자(탭·개행·CR 제외)는 지운다 — 노트 제목에 하나만
+// 섞여도 내보낸 문서 전체가 파서에서 깨진다 (ISSUE-372). 이스케이프가 아니라 제거다:
+// 숫자 참조(&#x0;)로도 XML 1.0 에서는 불법이라 살릴 길이 없다. 정규식이 아니라 코드
+// 포인트 필터다 — 제어문자 리터럴을 담은 정규식은 린터(no-control-regex)가 오독한다.
+function stripXmlIllegal(s: string): string {
+  let out = "";
+  for (const ch of s) {
+    const c = ch.codePointAt(0)!;
+    if (c <= 0x1f && c !== 0x09 && c !== 0x0a && c !== 0x0d) continue;
+    out += ch;
+  }
+  return out;
+}
+
 const xml = (s: string): string =>
-  s
-    // XML 1.0 이 허용하지 않는 제어문자(탭·개행·CR 제외)는 지운다 — 노트 제목에 하나만
-    // 섞여도 내보낸 문서 전체가 파서에서 깨진다 (ISSUE-372). 이스케이프가 아니라 제거다:
-    // 숫자 참조(&#x0;)로도 XML 1.0 에서는 불법이라 살릴 길이 없다.
-    .replaceAll(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/gu, "")
+  stripXmlIllegal(s)
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")

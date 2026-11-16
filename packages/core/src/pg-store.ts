@@ -115,7 +115,7 @@ function rows(store: GraphStore, sql: string): Record<string, unknown>[] {
   const stmt = store.db.prepare(sql);
   try {
     const out: Record<string, unknown>[] = [];
-    while (stmt.step()) out.push(stmt.getAsObject() as Record<string, unknown>);
+    while (stmt.step()) out.push(stmt.getAsObject());
     return out;
   } finally {
     stmt.free();
@@ -288,17 +288,10 @@ export async function loadCanonicalFromPg(session: PgCanonicalSession, schema: s
 
 // ---- 반영 (덤프 → PG) — rev 가드 단일 트랜잭션: 전부 아니면 전무 (AC5) ----
 
-export async function flushCanonicalToPg(
-  session: PgCanonicalSession,
-  schema: string,
-  dump: CanonicalDump,
-): Promise<{ rev: number }> {
-  assertCanonicalSchema(schema);
-  if (dump.schema !== CANONICAL_DUMP_SCHEMA) {
-    throw new PgStoreError(422, [`덤프 스키마가 맞지 않는다 (기대 ${CANONICAL_DUMP_SCHEMA})`]);
-  }
+/** 전량 치환문 — flush(rev+1·가드)와 이관 복원(rev 보존 — ISSUE-444)이 같은 몸을 쓴다. */
+function canonicalReplaceStatements(schema: string, dump: CanonicalDump, revValue: number): PgStatement[] {
   const s = schema;
-  const next = dump.rev + 1;
+  const next = revValue;
   const statements: PgStatement[] = [
     ...TABLES.map((t) => ({ sql: `DELETE FROM ${s}.canonical_${t}` })),
     ...dump.nodes.map((n) => ({
@@ -332,6 +325,21 @@ export async function flushCanonicalToPg(
     { sql: `INSERT INTO ${s}.canonical_meta(key, value) VALUES ($1,$2)`, params: ["registry_yml", dump.registryYml] },
     { sql: `INSERT INTO ${s}.canonical_meta(key, value) VALUES ($1,$2)`, params: ["rev", String(next)] },
   ];
+  return statements;
+}
+
+export async function flushCanonicalToPg(
+  session: PgCanonicalSession,
+  schema: string,
+  dump: CanonicalDump,
+): Promise<{ rev: number }> {
+  assertCanonicalSchema(schema);
+  if (dump.schema !== CANONICAL_DUMP_SCHEMA) {
+    throw new PgStoreError(422, [`덤프 스키마가 맞지 않는다 (기대 ${CANONICAL_DUMP_SCHEMA})`]);
+  }
+  const s = schema;
+  const next = dump.rev + 1;
+  const statements = canonicalReplaceStatements(schema, dump, next);
   // 가드 — 첫 flush(rev 0·meta 비어 있음)는 부재 허용, 그 뒤는 rev 일치가 조건이다.
   const guard: PgStatement =
     dump.rev === 0
@@ -341,6 +349,50 @@ export async function flushCanonicalToPg(
       : { sql: `SELECT 1 AS ok FROM ${s}.canonical_meta WHERE key = 'rev' AND value = $1`, params: [String(dump.rev)] };
   await session.transact(statements, guard);
   return { rev: next };
+}
+
+/**
+ * 이관 복원 (ISSUE-444) — flush 와 달리 rev 를 **그대로** 옮기고 가드가 없다: 사본이 원본과
+ * 같은 얼굴이어야 재적재 대조 검증(덤프는 결정적 — 같은 상태는 같은 JSON)이 성립하고, 대상은
+ * 막 태어난 자리거나 재시도의 덮어쓰기다. 일반 쓰기 경로가 아니다 — 새 호출처를 만들지 않는다.
+ */
+export async function restoreCanonicalToPg(
+  session: PgCanonicalSession,
+  schema: string,
+  dump: CanonicalDump,
+): Promise<void> {
+  assertCanonicalSchema(schema);
+  if (dump.schema !== CANONICAL_DUMP_SCHEMA) {
+    throw new PgStoreError(422, [`덤프 스키마가 맞지 않는다 (기대 ${CANONICAL_DUMP_SCHEMA})`]);
+  }
+  await session.transact([...ddl(schema), ...canonicalReplaceStatements(schema, dump, dump.rev)]);
+}
+
+// ---- 저장 용량 측정 (ISSUE-446) — **제공 자리 자격증명 경로에서만** 부른다: 자기 PG 는
+// 이용자 인프라라 재지도 않고 상한도 없다. 읽기뿐 — 쓰기·복사 연산이 아니다. ----
+
+const RELATION_SIZE_SQL = `SELECT COALESCE(SUM(pg_total_relation_size(c.oid)), 0)::text AS bytes
+  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE c.relkind = 'r' AND `;
+
+function bytesOf(rows: Record<string, unknown>[]): number {
+  const n = Number(rows[0]?.bytes ?? 0); // bigint 은 드라이버가 문자열로 돌려준다 — 그래서 ::text
+  if (!Number.isFinite(n) || n < 0) throw new PgStoreError(500, [`저장 용량 측정값이 수가 아니다: ${String(rows[0]?.bytes)}`]);
+  return n;
+}
+
+/** 한 스키마의 저장 용량(인덱스·TOAST 포함) — 개인 제공 자리(공유 DB 안 계정 스키마)의 축. */
+export async function schemaStorageBytes(session: PgCanonicalSession, schema: string): Promise<number> {
+  assertCanonicalSchema(schema);
+  return bytesOf(await session.query(`${RELATION_SIZE_SQL}n.nspname = $1`, [schema]));
+}
+
+/**
+ * DB 안 ontoflow 스키마 전부의 저장 용량 — 워크스페이스 제공 DB(#444: 조직별 데이터베이스라
+ * 그 안의 전부가 그 조직 몫 — 멤버 스키마 + `ontoflow_org`)의 축.
+ */
+export async function canonicalStorageBytes(session: PgCanonicalSession): Promise<number> {
+  return bytesOf(await session.query(`${RELATION_SIZE_SQL}n.nspname LIKE 'ontoflow%'`));
 }
 
 // ---- 수집함 (#81) — 원격 캡처의 보류함. 사용자 PG 안이다: 허브 보관 0 그대로 ----
@@ -403,6 +455,26 @@ export async function ackInbox(
   await session.transact(
     ids.map((id) => ({ sql: `DELETE FROM ${schema}.canonical_inbox WHERE id = $1`, params: [id] })),
   );
+}
+
+/**
+ * 이관 복원 짝 (ISSUE-444) — pushInbox 와 달리 id·captured_at 을 **보존**한다: 재시도가
+ * 중복 행을 만들지 않고(id 충돌 무해), 드레인 순서(captured_at)가 이관을 건너 그대로 선다.
+ */
+export async function restoreInbox(
+  session: PgCanonicalSession,
+  schema: string,
+  notes: readonly PeekedInboxNote[],
+): Promise<void> {
+  assertCanonicalSchema(schema);
+  await session.transact([
+    ...ddl(schema), // 멱등 — 캡처 0 인 멤버의 이관도 선다
+    ...notes.map((n) => ({
+      sql: `INSERT INTO ${schema}.canonical_inbox(id, title, md, captured_at) VALUES ($1,$2,$3,$4)
+        ON CONFLICT(id) DO NOTHING`,
+      params: [n.id, n.title, n.md, n.capturedAt] as unknown[],
+    })),
+  ]);
 }
 
 /**

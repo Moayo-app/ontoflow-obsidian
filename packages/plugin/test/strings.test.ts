@@ -1,13 +1,7 @@
 // 문구 카탈로그 (ISSUE-368) — 두 벌의 키 동치·로케일 감지·보간이 축이다.
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { PLUGIN_STRINGS, detectLocale, fmt } from "../src/strings.js";
-
-const g = globalThis as { localStorage?: { getItem(k: string): string | null } };
-
-afterEach(() => {
-  delete g.localStorage;
-});
 
 describe("플러그인 문구 카탈로그", () => {
   it("ko·en 두 벌은 같은 키를 지니고, 값은 전부 비지 않은 문자열이다", () => {
@@ -29,21 +23,11 @@ describe("플러그인 문구 카탈로그", () => {
     }
   });
 
-  it("로케일은 옵시디언 언어 설정에서 읽는다 — ko 만 ko, 그 외·부재·고장은 en", () => {
-    g.localStorage = { getItem: (k) => (k === "language" ? "ko" : null) };
-    expect(detectLocale()).toBe("ko");
-    g.localStorage = { getItem: () => "ja" };
-    expect(detectLocale()).toBe("en");
-    g.localStorage = { getItem: () => null };
-    expect(detectLocale()).toBe("en");
-    delete g.localStorage;
-    expect(detectLocale()).toBe("en");
-    g.localStorage = {
-      getItem: () => {
-        throw new Error("닫힌 저장소");
-      },
-    };
-    expect(detectLocale()).toBe("en");
+  it("로케일은 옵시디언 getLanguage() 값에서 정한다 — ko 만 ko, 그 외·빈 값은 en", () => {
+    expect(detectLocale("ko")).toBe("ko");
+    expect(detectLocale("ja")).toBe("en");
+    expect(detectLocale("en")).toBe("en");
+    expect(detectLocale("")).toBe("en");
   });
 
   it("fmt 는 {토큰}을 치환하고 모르는 토큰은 그대로 둔다", () => {

@@ -403,7 +403,7 @@ export const DUNNING_NOTICES: Record<DunningStage, string> = {
   grace:
     "결제가 밀렸습니다 — 7일 안에 결제가 서면 서비스가 그대로 유지됩니다. 유예 중 삭제되는 것은 없습니다.",
   "read-only":
-    "결제 유예(7일)가 지났습니다 — 새 추출·수집이 멈추고 읽기와 내보내기만 동작합니다. 결제가 서면 즉시 재개됩니다.",
+    "결제 유예(7일)가 지났습니다 — 새 추출·가져오기가 멈추고 읽기와 내보내기만 동작합니다. 결제가 서면 즉시 재개됩니다.",
   suspended:
     "구독이 정지됐습니다 — 처리가 멈춥니다. 데이터는 삭제되지 않으며 내보내기는 계속 동작합니다. 결제가 서면 즉시 재개됩니다.",
 };
@@ -452,9 +452,25 @@ export interface WebhookHeaders {
   signature: string; // webhook-signature
 }
 
-function webhookSecretBytes(secret: string): Uint8Array {
+// base64 왕복은 손으로 — Buffer 는 Node 전용이라 플러그인 번들(브라우저·모바일)에 없다.
+// 이 모듈이 미러 폐쇄에 실리므로(플러그인이 요금제 타입을 문다) 전부 이식 가능해야 한다.
+function base64Decode(s: string): Uint8Array<ArrayBuffer> {
+  const bin = atob(s);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function base64Encode(bytes: Uint8Array): string {
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin);
+}
+
+// 반환은 ArrayBuffer 기반으로 좁힌다 — BufferSource(WebCrypto 입력)가 그걸 요구해서다: 단언 대신 타입.
+function webhookSecretBytes(secret: string): Uint8Array<ArrayBuffer> {
   return secret.startsWith("whsec_")
-    ? new Uint8Array(Buffer.from(secret.slice("whsec_".length), "base64"))
+    ? base64Decode(secret.slice("whsec_".length))
     : new TextEncoder().encode(secret);
 }
 
@@ -477,7 +493,7 @@ export async function verifyWebhookSignature(
   if (Math.abs(nowSec - ts) > WEBHOOK_TOLERANCE_SEC) return false;
   const key = await crypto.subtle.importKey(
     "raw",
-    webhookSecretBytes(secret) as BufferSource,
+    webhookSecretBytes(secret),
     { name: "HMAC", hash: "SHA-256" },
     false,
     ["sign"],
@@ -485,9 +501,9 @@ export async function verifyWebhookSignature(
   const mac = await crypto.subtle.sign(
     "HMAC",
     key,
-    new TextEncoder().encode(`${headers.id}.${headers.timestamp}.${payload}`) as BufferSource,
+    new TextEncoder().encode(`${headers.id}.${headers.timestamp}.${payload}`),
   );
-  const expected = Buffer.from(new Uint8Array(mac)).toString("base64");
+  const expected = base64Encode(new Uint8Array(mac));
   return headers.signature.split(" ").some((part) => {
     const [version, sig] = part.split(",");
     return version === "v1" && sig !== undefined && timingSafeEqual(sig, expected);
@@ -661,7 +677,9 @@ export function applySubscriptionEvent(
   products: Readonly<Record<string, PlanId>> = {},
 ): WebhookOutcome {
   if (!event.type.startsWith("subscription.")) return { applied: false, subscription: current };
-  const data = (event.data ?? {}) as PolarEvent["data"];
+  // 타입은 data 필수지만 파서(parsePolarEvent)는 type 만 검증한다 — 런타임 부재의 방어가 이
+  // 폴백이고, 빈 id 는 아래 가드(길이 0)가 같은 422 로 거른다. 단언이 아니라 주석된 선언이다.
+  const data: PolarEvent["data"] = event.data ?? { id: "" };
   const id = data.id;
   const accountId = accountIdOf(data);
 
@@ -803,7 +821,7 @@ export async function handlePolarWebhook(
   const event = await verifiedWebhookEvent(secret, headers, payload, now);
   // 조회는 구독 축에만 — 서명을 지난 본문의 accountId 로만 저장소에 닿는다 (위조 조회 0).
   const accountId = event.type.startsWith("subscription.")
-    ? accountIdOf((event.data ?? {}) as PolarEvent["data"])
+    ? accountIdOf(event.data ?? { id: "" })
     : null;
   const current = accountId === null ? null : await lookup(accountId);
   return { ...applySubscriptionEvent(current, event, now, products), previous: current };
@@ -829,7 +847,8 @@ export interface PackWebhookOutcome {
 
 export function applyPackOrderEvent(event: PolarEvent, now: string): PackWebhookOutcome {
   if (!event.type.startsWith("order.")) return { applied: false };
-  const data = (event.data ?? {}) as PolarEvent["data"];
+  const data: PolarEvent["data"] = event.data ?? { id: "" }; // 런타임 부재 방어 — 빈 id 는 아래 422 가드 몫
+
   const meta = data.product?.metadata;
   // ⚠️ 구독 상품의 주문 이벤트도 여기로 온다(Polar 는 구독 청구도 order 를 낸다) — 팩 표식이
   //    없으면 전부 무시한다: 구독 축은 subscription.* 핸들러가 들고, 남의 제품도 여기서 걸러진다.
@@ -929,7 +948,8 @@ export function assertPlanChangeEnforceable(change: PlanChange, now: string): vo
 export const FREE_MONTHLY_CREDITS = FREE_CREDITS;
 
 // 집계 — 소비 수·시점·노트 식별자(경로)만 남는다 (AC6 · 스펙 AC42): 노트 내용·제목이 들어올
-// 필드 자체가 없다. ⚠️ chargedNotes 의 키는 vault 상대 경로다 — 「같은 달 같은 노트 재추출
+// 필드 자체가 없다. ⚠️ chargedNotes 의 키는 vault 상대 경로다(워크스페이스 풀은 멤버 계정 id
+// 접두가 붙는다 — decideOrgExtraction, #441) — 「같은 달 같은 노트 재추출
 // 무소비」(#193 최신 유지권)의 장부라 경로가 필요하고, 월이 바뀌면 통째로 비워진다.
 export interface UsageRecord {
   accountId: string;
@@ -951,7 +971,19 @@ export interface UsageRecord {
   notices?: Partial<Record<UsageNoticeKind, string>>;
 }
 
-export const monthOf = (now: string): string => now.slice(0, 7);
+/**
+ * 월 경계의 시간대 — **KST** 다 (#441 ③). 약관·가격이 말하는 「월」은 고객(판매 지역 한국)의
+ * 달력이고, UTC 경계면 지갑·무소비 장부가 매월 1일 **오전 9시**에 리셋돼 약속과 어긋난다.
+ * 지갑 리셋(`decideCreditSpend` 의 period 전환)과 소진 예측(`depletionForecastAt`)이 같은
+ * 경계를 봐야 하므로 상수 하나에서 파생한다.
+ */
+export const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+
+export const monthOf = (now: string): string => {
+  const ms = Date.parse(now);
+  // ISO 가 아니면 옛 동작(UTC 머리 7자)으로 — 여기서 새 실패 꼴을 만들지 않는다.
+  return Number.isNaN(ms) ? now.slice(0, 7) : new Date(ms + KST_OFFSET_MS).toISOString().slice(0, 7);
+};
 
 export function emptyUsage(accountId: string, now: string): UsageRecord {
   return { accountId, period: monthOf(now), credits: 0, chargedNotes: {}, lastAt: null, initialIndexAt: null };
@@ -984,6 +1016,57 @@ export function packsBalance(packs: readonly CreditPack[], now: string): number 
 export function packRefundable(pack: CreditPack, now: string): boolean {
   const ageDays = (Date.parse(now) - Date.parse(pack.purchasedAt)) / (24 * 60 * 60 * 1000);
   return ageDays <= CREDIT_PACK.refundDays && pack.remaining === pack.credits;
+}
+
+/** 콘솔 팩 목록 한 줄의 꼴 (ISSUE-436 ③) — `refundable` 이 환불 진입점의 스위치다. */
+export interface PackView {
+  id: string;
+  purchasedAt: string;
+  expiresAt: string;
+  credits: number;
+  remaining: number;
+  refundable: boolean;
+}
+
+/** 팩 목록 화면 판정 (ISSUE-436 ③) — 개인·워크스페이스가 같은 꼴을 그린다. 소진·만료분은 빠진다. */
+export function packListView(packs: readonly CreditPack[], now: string): PackView[] {
+  return packs
+    .filter((p) => packLive(p, now))
+    .map((p) => ({
+      id: p.id,
+      purchasedAt: p.purchasedAt,
+      expiresAt: p.expiresAt,
+      credits: p.credits,
+      remaining: p.remaining,
+      refundable: packRefundable(p, now),
+    }));
+}
+
+/**
+ * 소진 예측 (ISSUE-436 ① — #193 「잔량·소진 예측·80/100% 거래 고지」의 가운데 조각) —
+ * 당월 소비 속도(일할)로 남은 크레딧(쿼터 잔량 + 팩)의 소진 시점을 외삽한다.
+ * null = 비표시: 소비 0 · 쿼터 무한 · 이미 소진(100% 고지가 그 자리를 진다) · 집계가 당월이
+ * 아니다 · 이 속도면 월이 먼저 바뀐다(쿼터가 리셋되므로 **당월 한정** 예측이다).
+ */
+export function depletionForecastAt(
+  pool: { monthlyCredits: number; used: number } | null,
+  packsLeft: number,
+  period: string,
+  now: string,
+): string | null {
+  if (pool === null || pool.used <= 0 || period !== monthOf(now)) return null;
+  const remaining = pool.monthlyCredits - pool.used + packsLeft;
+  if (remaining <= 0) return null;
+  const start = Date.parse(`${period}-01T00:00:00+09:00`); // 월 경계는 KST 다 (monthOf 주석)
+  const nowMs = Date.parse(now);
+  if (!Number.isFinite(start) || !Number.isFinite(nowMs) || nowMs <= start) return null;
+  const rate = pool.used / ((nowMs - start) / 86_400_000); // 크레딧/일
+  const atMs = nowMs + (remaining / rate) * 86_400_000;
+  const [y, m] = period.split("-");
+  // Date.UTC 의 월은 0-기반이라, 1-기반 m 을 그대로 넣으면 **다음 달 1일**(UTC)이다 — 의도다.
+  // KST 경계로 옮기려 오프셋을 뺀다 (12월도 연도 넘김이 Date.UTC 오버플로우로 선다).
+  if (atMs >= Date.UTC(Number(y), Number(m), 1) - KST_OFFSET_MS) return null;
+  return new Date(atMs).toISOString();
 }
 
 /** 소비 — 월 지급분 먼저, 팩은 오래된 것부터. 호출 전에 잔량 검사를 끝낸 자리다. */
@@ -1110,9 +1193,11 @@ export function decideCreditSpend(
 
   const charged = current.chargedNotes ?? {};
   let cost = 0;
+  const seen = new Set<string>(); // 한 요청 안 같은 id 도 한 번만 — 장부(nextCharged)와 같은 규칙 (#441)
   for (const note of request.notes) {
     // 같은 달 같은 노트는 무소비 — 「그 달 그 노트의 최신 유지권」 (#193).
-    if ((charged[note.id] ?? 0) > 0) continue;
+    if (seen.has(note.id) || (charged[note.id] ?? 0) > 0) continue;
+    seen.add(note.id);
     cost += creditsForChars(note.chars);
   }
   const monthlyLeft = quota === null ? Number.POSITIVE_INFINITY : Math.max(0, quota - current.credits);
@@ -1362,12 +1447,14 @@ export interface ConsoleView {
    * 살아 있는 팩의 목록 (AC7·AC8) — `refundable` 이 환불 진입점의 스위치다: 조건 미충족이면
    * 화면이 그 버튼을 **그리지 않는다**(비노출). 소진·만료분은 목록에서 빠진다.
    */
-  packs: { id: string; purchasedAt: string; expiresAt: string; credits: number; remaining: number; refundable: boolean }[];
+  packs: PackView[];
   /**
    * 체납 단계 고지 (ISSUE-242 AC8) — past_due 일 때만 실린다: 단계와 그 단계의 거래 고지
    * 자구(화면이 자구를 지어내지 않는다). null = 체납 아님.
    */
   dunning: { stage: DunningStage; notice: string } | null;
+  /** 소진 예측 (ISSUE-436 ① — 동반 출고 조건의 가운데 조각) — null = 비표시(함수 머리주석). */
+  forecastDepletionAt: string | null;
 }
 
 export function consoleView(
@@ -1420,15 +1507,12 @@ export function consoleView(
         : { monthlyCredits: quota, used: usage.credits, initialIndexUsed: usage.initialIndexAt !== null },
     usage: { period: usage.period, credits: usage.credits, lastAt: usage.lastAt },
     packsBalance: packsBalance(packs, now),
-    packs: packs
-      .filter((p) => packLive(p, now))
-      .map((p) => ({
-        id: p.id,
-        purchasedAt: p.purchasedAt,
-        expiresAt: p.expiresAt,
-        credits: p.credits,
-        remaining: p.remaining,
-        refundable: packRefundable(p, now),
-      })),
+    packs: packListView(packs, now),
+    forecastDepletionAt: depletionForecastAt(
+      quota === null ? null : { monthlyCredits: quota, used: usage.credits },
+      packsBalance(packs, now),
+      usage.period,
+      now,
+    ),
   };
 }

@@ -29,6 +29,11 @@ export const HOME_FILES = [
   HOLD_FILE,
   REVIEW_FILE,
   ONBOARDING_FILE,
+  // 아래 셋은 import 만 있고 목록에 빠져 있었다 — 홈 이동이 재부상·소스·합성 상태를 옛
+  // 자리에 버리는 실버그였다(옵시디언 심사 린트의 unused-import 지적이 들춘 것).
+  RESURFACE_STATE_FILE,
+  SOURCES_STATE_FILE,
+  SYNTHESIS_STATE_FILE,
 ] as const;
 
 export interface DesignateResult {

@@ -1,62 +1,61 @@
 # OntoFlow
 
-**쓰고 잊은 노트가 다시 말을 건다.** OntoFlow 는 vault 를 읽고, 서로 부딪히는 주장·받칠 노트가 빈 개념·서로 다른 자리에 선 같은 생각을 찾아 되돌려준다 — 정리는 기계가, 확정은 당신이.
+[한국어](README.ko.md)
 
-모든 발견은 당신의 노트가 근거다. 모순 하나, 공백 하나, 의외의 연결 하나 — 첫 색인이 끝나는 화면부터 당신 노트에서 나온 것만 선다. 지어낸 예시는 없다.
+**Notes you wrote and forgot start talking back.** OntoFlow reads your vault and returns what it finds: claims that contradict each other, concepts with many links but no note to back them, and the same idea standing in different places — the machine organizes, you confirm.
 
-## 무엇을 돌려주나
+Every finding is grounded in your own notes. One contradiction, one gap, one unexpected connection — from the first-index completion screen onward, everything you see comes from your notes. There are no made-up examples.
 
-- **재부상** — 모순(서로 반박하는 두 노트)·공백(연결은 많은데 받칠 노트가 빈 개념)·잊은 연결이 검토함과 주간 리포트로 선다. 판정은 전부 당신 몫 — 자동 반영은 없다.
-- **근거 있는 답** — 발견마다 근거 노트로 한 번에 간다.
-- **어느 LLM 을 쓰든, 당신을 아는 건 당신 쪽이다** — Claude·GPT 같은 외부 AI 가 MCP 로 당신의 지식 위에 올라탄다. 특정 벤더에 묶이지 않는다.
-- **소유는 사용자** — 정본은 당신 자리에 산다: vault 안 SQLite(기본) 또는 당신 소유 PostgreSQL. JSON-LD·GraphML 로 언제든 전부, 로컬에서, 무료로 들고 나간다.
-- **프라이버시 선택지** — 기본은 호스티드 처리(콘텐츠 보관 0 · zero-retention). 원하면 BYO: 당신 기계의 로컬 모델(Ollama·vLLM·LM Studio)로만 처리해 노트 본문이 기기를 떠나지 않는다.
+## What you get back
 
-이 모든 것의 엔진은 닫힌 동사의 지식 그래프다 — 노트가 링크가 아니라 의미(지지한다·반박한다·일부다·원인이다…)로 연결되고, 기계의 제안은 전부 검토함에서 당신 확정을 기다린다. 그래프는 엔진이지 간판이 아니다: 당신이 보는 건 그림이 아니라 발견이다.
+- **Insights** — contradictions (two notes refuting each other), gaps (a concept with many links but no backing note), and forgotten connections arrive in the review inbox and a weekly report. Every verdict is yours — nothing is applied automatically.
+- **Grounded answers** — every finding links straight to its source notes.
+- **Whichever LLM you use, the side that knows you is yours** — external AIs like Claude or GPT ride on top of your knowledge through MCP. You are not tied to any vendor.
+- **You own it** — your database lives in your place: SQLite inside the vault (default) or a PostgreSQL you own. Export everything as JSON-LD or GraphML at any time, locally, for free.
+- **Privacy options** — the default is hosted processing with zero retention (no content is stored). If you prefer, bring your own endpoint: process only with a local model on your machine (Ollama, vLLM, LM Studio) so note content never leaves the device.
 
-## 시작
+The engine behind all of this is a knowledge graph of closed verbs — notes connect by meaning (supports, refutes, is part of, causes…), not just links, and every machine suggestion waits for your confirmation in the review inbox. The graph is the engine, not the storefront: what you see are findings, not a picture.
 
-1. 플러그인 설치 → 허브 연결 — 무료 요금제는 최초 색인 1회 + 월 30크레딧 + 주간 리포트.
-2. vault 선택 → 민감정보 동의 → 색인 시작.
-3. 완료 화면에서 당신 노트에서 나온 발견 3건을 본다 — 거기서부터다.
+## Getting started
 
-Obsidian 밖의 노트(일반 md 폴더·Logseq·Bear·OneNote·Evernote·Notion·Google Drive·Dropbox·GitLab·GitHub·Jira·Confluence)도 허브 콘솔의 「연결」 버튼 하나로 수집에 들어온다 — 토큰 발급 없이(Notion 만 내부 통합 토큰 입력). 연결된 API 소스는 플러그인이 시작할 때와 「수집 소스 따라잡기」 커맨드에서 증분으로 당긴다 — 따로 등록할 것이 없다: 연결이 곧 등록이다.
+1. Install the plugin → connect the hub — the free plan includes one initial index, 30 credits a month, and the weekly report.
+2. Pick a vault → consent to sensitive-data processing → start indexing.
+3. On the completion screen, see three findings drawn from your own notes — start there.
 
-## 설치
+Notes outside Obsidian (plain Markdown folders, Logseq, Bear, OneNote, Evernote, Notion, Google Drive, Dropbox, GitLab, GitHub, Jira, Confluence) join the import with a single **Connect** button in the hub console — no token juggling (only Notion takes an internal integration token). Connected API sources are pulled incrementally when the plugin starts and by the **Catch up import sources** command — there is nothing else to register: connecting is registering.
 
-커뮤니티 플러그인 목록 등재는 아직이다. 그때까지는 손으로 넣는다 — 파일은 두 개뿐이다.
+## Install
 
-1. [릴리스](https://github.com/Moayo-app/OntoFlow/releases)에서 `main.js` 와 `manifest.json` 을 내려받는다.
-2. vault 안에 `.obsidian/plugins/ontoflow/` 폴더를 만들고 두 파일을 넣는다.
+Community-plugin listing is pending. Until then, install by hand — it is only two files.
+
+1. Download `main.js` and `manifest.json` from the [releases](https://github.com/Moayo-app/OntoFlow/releases).
+2. Create `.obsidian/plugins/ontoflow/` inside your vault and put both files there.
 
    ```
-   <내 vault>/.obsidian/plugins/ontoflow/
+   <your vault>/.obsidian/plugins/ontoflow/
    ├── main.js
    └── manifest.json
    ```
 
-3. Obsidian → 설정 → 커뮤니티 플러그인 → 설치된 플러그인 **새로고침** → OntoFlow **활성화**.
-4. 허브와 잇는다 — [허브 콘솔](https://hub.ontoflow.app/console) 「계정」에서 **API 키**를
-   발급해(`ofk_…` — 지금 한 번만 보인다) 플러그인 설정의 「허브 주소」(`https://hub.ontoflow.app`)와
-   「허브 API 키」에 넣는다. 키는 만료가 없어 한 번 넣으면 끝이고, 분실하면 콘솔에서 회수하고
-   새로 발급한다.
+3. Obsidian → Settings → Community plugins → **Reload** installed plugins → enable **OntoFlow**.
+4. Connect the hub — in the [hub console](https://hub.ontoflow.app/console) under **Account**, issue an **API key** (`ofk_…` — shown only once) and paste it into the plugin settings along with the hub address (`https://hub.ontoflow.app`). Keys do not expire; if you lose one, revoke it in the console and issue a new one.
 
-필요한 Obsidian 최소 버전은 1.5.0 이다. 데스크톱·모바일 모두 선다 — 다만 vault 밖 폴더 수집(일반 md·Logseq·동기화 폴더)과 Bear 수집은 파일시스템 접근이 필요해 데스크톱 전용이고, 모바일에서는 그 항목이 조용히 비는 대신 명시적으로 안내된다.
+The minimum Obsidian version is 1.5.0. Desktop and mobile both work — importing folders outside the vault (plain Markdown, Logseq, synced folders) and Bear need filesystem access and are desktop-only; on mobile those items are announced explicitly rather than silently missing.
 
-## 네트워크·프라이버시 고지
+## Network & privacy notice
 
-**기본값은 외부 전송 0 이다.** 설치하고 켜는 것만으로는 아무것도 나가지 않는다 — 허브 주소·API 키를 넣고 민감정보 동의를 마칠 때까지 노트는 이 기기를 떠나지 않는다. 플러그인에 **텔레메트리·사용 분석·광고는 없고**, 원격 코드를 내려받아 실행하는 경로도 없다(SQLite 엔진의 wasm 까지 번들에 들어 있다).
+**The default is zero outbound traffic.** Installing and enabling the plugin sends nothing — until you enter a hub address and API key and complete the sensitive-data consent, your notes never leave the device. The plugin has **no telemetry, no analytics, no ads**, and no path that downloads and runs remote code (even the SQLite engine's wasm is bundled).
 
-연결한 뒤에 통신하는 곳은 다음뿐이다.
+After you connect, it talks to these places only:
 
-| 어디로 | 무엇이 | 언제 |
+| Where | What | When |
 | --- | --- | --- |
-| 모아요 허브 (당신이 설정 탭에 넣은 주소) | 추출할 노트 본문·구조화 결과 | 색인·수집 때. 허브는 **콘텐츠를 보관하지 않는다**(zero-retention) |
-| BYO 엔드포인트 (당신이 넣은 주소) | 추출할 노트 본문 | BYO 를 설정했을 때. 이 경우 본문은 **당신 기계를 떠나지 않는다** |
-| 당신 소유 PostgreSQL (허브 경유) | 정본 그래프 | 정본 자리를 `pg` 로 골랐을 때 |
+| Moayo hub (the address you enter in settings) | Note content to extract, structured results | During indexing and import. The hub **keeps no content** (zero retention) |
+| BYO endpoint (the address you enter) | Note content to extract | When you configure BYO. In that case content **never leaves your machine** |
+| Your own PostgreSQL (via the hub) | Your graph database | When you choose `pg` as your database |
 
-- **당신 자리에만 사는 것**: 허브 API 키·BYO API 키는 이 플러그인의 설정 저장소(`data.json`)에만 있고, 호출 헤더로만 흐른다 — 노트 본문·로그·오류 문구에 실리지 않는다.
-- **외부 소스 연결**(OneNote·Evernote·Google Drive·Dropbox)의 OAuth 는 허브 콘솔에서 끝난다 — 토큰은 금고로 직행하고 **이 플러그인은 토큰을 보지 않는다**. 설정 탭의 버튼은 그 화면을 브라우저로 여는 손잡이다.
-- **계정**: 온톨로지 추출(색인·수집 반영)은 허브 계정이 있어야 돈다 — 무료 요금제가 기한 없이 있다. 계정 없이 쓸 수 있는 범위는 아래 줄 그대로다.
-- **결제**: 무료 요금제의 처리량(월 30크레딧)을 넘는 추출은 유료 요금제가 필요하다. 가격은 [ontoflow.app](https://ontoflow.app) 의 요금제 화면이 정본이다 — 이 플러그인 안에는 결제가 없다.
-- **허브 없이 쓸 수 있는 범위**: 정본 열람·JSON-LD/GraphML 내보내기·주간 리포트(재부상 판정)·로컬 MCP 연계는 전부 로컬 판정이라 네트워크가 필요 없다. 내보내기는 로컬·무료다 — 떠나는 문은 항상 열려 있다.
+- **Lives only in your place**: the hub API key and BYO API key exist only in this plugin's settings store (`data.json`) and flow only as call headers — never in note content, logs, or error messages.
+- **External source connections** (OneNote, Evernote, Google Drive, Dropbox) finish their OAuth in the hub console — tokens go straight to the vault-side credential store and **this plugin never sees them**. The settings-tab buttons just open that page in your browser.
+- **Account**: ontology extraction (indexing and import) needs a hub account — a free plan exists with no time limit. What works without an account is exactly the line below.
+- **Payment**: extraction beyond the free plan's monthly allowance needs a paid plan. Prices live on the plans page at [ontoflow.app](https://ontoflow.app) — there is no payment inside this plugin.
+- **What works without the hub**: browsing your database, JSON-LD/GraphML export, the weekly report (insight verdicts), and local MCP are all local — no network needed. Export is local and free — the door out is always open.

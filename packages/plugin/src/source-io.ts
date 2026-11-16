@@ -12,7 +12,9 @@ export interface FolderFs {
 }
 
 export function nodeFolderFs(): FolderFs {
-  const req = (globalThis as { require?: (m: string) => unknown }).require;
+  // window 기준 — 옵시디언 팝아웃 호환 규약(globalThis 비사용). 창·require 가 없으면 모바일이다.
+  const req =
+    typeof window === "undefined" ? undefined : (window as unknown as { require?: (m: string) => unknown }).require;
   if (typeof req !== "function") {
     throw new Error("소스 폴더 수집은 데스크톱 전용이다 — 이 기기에는 파일시스템 접근이 없다");
   }

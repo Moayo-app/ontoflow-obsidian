@@ -13,7 +13,10 @@ interface NodeLike {
 }
 
 function nodeRequire(): ((m: string) => unknown) | null {
-  const req = (globalThis as { require?: (m: string) => unknown }).require;
+  // window 기준 — 옵시디언 팝아웃 호환 규약(globalThis 비사용). 창이 없는 런타임(테스트·모바일
+  // 꼴)은 typeof 가드가 거짓으로 걸러 비노출로 선다.
+  if (typeof window === "undefined") return null;
+  const req = (window as unknown as { require?: (m: string) => unknown }).require;
   return typeof req === "function" ? req : null;
 }
 

@@ -1,23 +1,16 @@
 // 플러그인 문구 카탈로그 (ISSUE-368) — 콘솔 console-strings 패턴의 플러그인 판: ko·en 두 벌이
-// 같은 키를 지니고, 로케일은 옵시디언의 언어 설정(localStorage "language" — null = 영어)에서
-// 한 번 읽는다. 어휘는 GLOSSARY 통일어(#199 — 동기화·가져오기·데이터베이스·수신함·인사이트),
-// 말씨는 존댓말(#346 전례 — 정보량·의미 무변)이다. 마켓 퍼널의 입구가 영어라 기본값은 en 이다.
+// 같은 키를 지니고, 로케일은 옵시디언의 getLanguage() 값을 조립 뿌리(main.ts)가 넘겨 한 번
+// 정해진다 — 이 모듈은 순수하게 남는다(옵시디언 import 0 · 테스트에 스텁 불요). 어휘는
+// GLOSSARY 통일어(#199 — 동기화·가져오기·데이터베이스·수신함·인사이트), 말씨는 존댓말
+// (#346 전례 — 정보량·의미 무변)이다. 마켓 퍼널의 입구가 영어라 기본값은 en 이다.
 //
 // 보간은 콘솔과 같은 {토큰} 치환이다 — 템플릿 리터럴을 카탈로그에 두면 두 벌이 코드가 된다.
 
 export type PluginLocale = "ko" | "en";
 
-export function detectLocale(): PluginLocale {
-  try {
-    // 옵시디언은 UI 언어를 localStorage "language" 에 둔다 — null·부재 = 영어.
-    return (globalThis as { localStorage?: { getItem(k: string): string | null } }).localStorage?.getItem(
-      "language",
-    ) === "ko"
-      ? "ko"
-      : "en";
-  } catch {
-    return "en"; // 저장소가 닫힌 환경(테스트·연기 시험) — 기본 en
-  }
+/** 옵시디언 getLanguage() 의 값 → 카탈로그 로케일. ko 만 ko — 그 외·빈 값은 en 이다. */
+export function detectLocale(language: string): PluginLocale {
+  return language === "ko" ? "ko" : "en";
 }
 
 export function fmt(text: string, values: Record<string, string | number>): string {
@@ -125,6 +118,8 @@ export interface PluginStrings {
   onboardingTitle: string;
   stepHubConnect: string;
   stepHubConnectDesc: string;
+  openSettingsBtn: string;
+  openHubConsoleBtn: string;
   checkConnectionBtn: string;
   connectionCheckFailed: string;
   stepChooseVault: string;
@@ -282,6 +277,8 @@ export const PLUGIN_STRINGS: Record<PluginLocale, PluginStrings> = {
     onboardingTitle: "OntoFlow 온보딩",
     stepHubConnect: "허브 연결 {state}",
     stepHubConnectDesc: "설정 탭에서 허브 주소와 API 키(허브 콘솔 「계정」에서 발급)를 먼저 넣어 주세요.",
+    openSettingsBtn: "설정 열기",
+    openHubConsoleBtn: "허브 콘솔 열기",
     checkConnectionBtn: "연결 확인",
     connectionCheckFailed: "연결 확인에 실패했습니다: {msg}",
     stepChooseVault: "vault 선택 {state}",
@@ -446,6 +443,8 @@ export const PLUGIN_STRINGS: Record<PluginLocale, PluginStrings> = {
     onboardingTitle: "OntoFlow onboarding",
     stepHubConnect: "Connect hub {state}",
     stepHubConnectDesc: "Enter the hub address and an API key (issued in the hub console under Account) in the settings tab first.",
+    openSettingsBtn: "Open settings",
+    openHubConsoleBtn: "Open hub console",
     checkConnectionBtn: "Check connection",
     connectionCheckFailed: "Connection check failed: {msg}",
     stepChooseVault: "Choose vault {state}",
@@ -526,6 +525,6 @@ export const PLUGIN_STRINGS: Record<PluginLocale, PluginStrings> = {
 };
 
 /** 로케일 한 벌 — 플러그인 로드 시 한 번 고른다(옵시디언 언어 변경은 재시작을 동반한다). */
-export function pluginStrings(): PluginStrings {
-  return PLUGIN_STRINGS[detectLocale()];
+export function pluginStrings(language: string): PluginStrings {
+  return PLUGIN_STRINGS[detectLocale(language)];
 }

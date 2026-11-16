@@ -14,6 +14,21 @@ export class CaptureError extends Error {
 /** 수집함 — vault 안 고정 폴더. 기계 자리(합성 ontoflow-notes)·홈(.ontoflow)과 달리 수집 대상이다. */
 export const CAPTURE_DIR = "ontoflow-inbox";
 
+/**
+ * 서러게이트 안전 절단 (#441) — `slice(0, n)` 은 UTF-16 짝(이모지·보충 평면 한자)을 반으로
+ * 갈라 외톨이 서러게이트를 남긴다: URI 인코딩·파일명에서 � 로 깨진다. 상한은 UTF-16 단위
+ * 그대로 두되(호출부 계약 무변) 코드 포인트 경계에서만 자른다 — clip·capture·sources 공용.
+ */
+export function sliceAtCodePoint(text: string, max: number): string {
+  if (text.length <= max) return text;
+  let out = "";
+  for (const ch of text) {
+    if (out.length + ch.length > max) break;
+    out += ch;
+  }
+  return out;
+}
+
 // 파일명 소독 — 경로 구분자·순회·옵시디언 금지 문자를 접는다 (sources.ts 와 같은 결).
 function sanitizeTitle(title: string): string {
   const flat = title
@@ -22,7 +37,7 @@ function sanitizeTitle(title: string): string {
     .replace(/\s+/g, " ")
     .trim()
     .replace(/^\.+|\.+$/g, "");
-  return flat.slice(0, 120).trim();
+  return sliceAtCodePoint(flat, 120).trim();
 }
 
 export interface CaptureInput {

@@ -156,6 +156,16 @@ export interface Plan {
    * 풀이다(풀 = 이 값 × 멤버 수 — #197 「좌석당 N 풀」).
    */
   monthlyCredits: number | null;
+  /**
+   * 제공 자리 저장 용량 상한 GB (ISSUE-446 — ⭕ Henry 판정 2026-11-16: 1/10/30, 크레딧
+   * 지급량 비례 + 보수 버킷 — 출시 코호트에 영구(제8조⑦ 결)라 올리는 개정만 전 코호트에
+   * 가능하다). **제공 자리에만** 선다 — 자기 PG·로컬(SQLite)은 이용자 인프라라 상한이 없다.
+   * seatBased 플랜에서는 **멤버당** 값이고 상한은 워크스페이스 합(= 값 × 멤버 수 — 크레딧
+   * 풀과 동형), 측정은 조직 제공 DB 전체다(#444). 초과 = 새 반영 **보류**뿐이다 — 기존
+   * 데이터의 열람·내보내기·삭제는 어떤 경우에도 제한하지 않는다(소유 원칙 무변). 쓰기
+   * 크레딧 차감안은 기각됐다(#446 — 이중 과금·멘털 모델 파괴·제8조③ 충돌).
+   */
+  seatStorageGb: number;
   /** 최초 색인 뒤의 전체 재색인 — 무료는 1회로 끝이다. */
   reindex: boolean;
   /**
@@ -192,6 +202,7 @@ export const PLANS: readonly Plan[] = [
     blurbEn: "One initial index, 30 credits a month and a weekly report — free with no time limit.",
     price: { kind: "free" },
     monthlyCredits: FREE_MONTHLY_CREDITS,
+    seatStorageGb: 1,
     reindex: false,
     remoteMcp: false,
     subscribable: false, // 바닥이다 — 살 것이 없다 (약관 제8조 ②③)
@@ -205,6 +216,7 @@ export const PLANS: readonly Plan[] = [
     // 도출 2026-11-03 (#130) → 크레딧 승계 2026-11-06 (#193·#197).
     price: { kind: "set", monthlyUsd: 15 },
     monthlyCredits: 2000,
+    seatStorageGb: 10,
     reindex: true,
     remoteMcp: false,
     subscribable: true,
@@ -217,6 +229,7 @@ export const PLANS: readonly Plan[] = [
     blurbEn: "6,000 credits a month and remote MCP — connect external AI tools to your graph.",
     price: { kind: "set", monthlyUsd: 29 },
     monthlyCredits: 6000, // ⭕ #193 재개정 (2026-11-15) — 무제한 → 6,000 (머리주석)
+    seatStorageGb: 30,
     reindex: true,
     remoteMcp: true, // ⭐ 상위 층의 차별점 (#81)
     subscribable: true,
@@ -232,6 +245,7 @@ export const PLANS: readonly Plan[] = [
     blurbEn: "Free for up to 5 members — credits are pooled across the workspace.",
     price: { kind: "free" }, // ⭕ 조직의 바닥이 생겼다 (#197 — 옛 「조직 무료 층 없음」 개정)
     monthlyCredits: FREE_MONTHLY_CREDITS,
+    seatStorageGb: 1,
     reindex: false,
     remoteMcp: false,
     subscribable: false,
@@ -244,6 +258,7 @@ export const PLANS: readonly Plan[] = [
     blurbEn: "A pool of 2,000 credits per member a month, plus remote MCP — external AI tools connect to the team graph.",
     price: { kind: "set", monthlyUsd: 20 },
     monthlyCredits: 2000,
+    seatStorageGb: 10,
     reindex: true,
     remoteMcp: true, // ⭕ #193 개정 (2026-11-14) — 팀은 Standard 부터, 버킷은 보수 층 (rate-limit.ts)
     subscribable: false,
@@ -256,6 +271,7 @@ export const PLANS: readonly Plan[] = [
     blurbEn: "A pool of 6,000 credits per member a month, SSO and SCIM — everything included.",
     price: { kind: "set", monthlyUsd: 40 },
     monthlyCredits: 6000, // ⭕ #193 재개정 (2026-11-15) — 무제한 → 멤버당 6,000 풀
+    seatStorageGb: 30,
     reindex: true,
     remoteMcp: true,
     subscribable: false,
@@ -320,4 +336,14 @@ export function teamPoolOf(plan: Plan, seats: number): number | null {
   if (!plan.seatBased) throw new PlanError(422, [`${plan.name} 은 워크스페이스 플랜이 아닙니다`]);
   if (!Number.isInteger(seats) || seats < 1) throw new PlanError(422, [`멤버 수가 양의 정수가 아닙니다: ${seats}`]);
   return plan.monthlyCredits === null ? null : plan.monthlyCredits * seats;
+}
+
+/**
+ * 제공 자리 저장 용량 상한 — 바이트 (ISSUE-446). 개인은 플랜값 그대로, 워크스페이스는
+ * 멤버당 × 멤버 수(크레딧 풀과 동형 — 측정도 조직 제공 DB 전체다). 자기 PG 는 이 함수를
+ * 지나지 않는다(상한 없음 — 호출처가 제공 자리 자격증명 경로에만 산다).
+ */
+export function seatStorageLimitBytes(plan: Plan, seats: number): number {
+  const units = plan.seatBased ? Math.max(1, seats) : 1;
+  return plan.seatStorageGb * units * 1024 ** 3;
 }
