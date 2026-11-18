@@ -13,12 +13,12 @@ comes from notes you wrote. No invented examples.
 
 - **Insights** – contradictions (two notes arguing against each other), gaps
   (concepts with many links but no note behind them), and forgotten connections,
-  delivered to a review inbox and a weekly report. Every judgment is yours to
+  delivered to a review queue and a weekly report. Every judgment is yours to
   accept or reject. Nothing is applied automatically.
 - **Grounded answers** – every finding links straight to the notes behind it.
 - **Any LLM, your memory** – external AIs such as Claude or GPT connect to your
   knowledge over MCP. You are not locked into any vendor.
-- **You own the database** – the canonical graph lives on your side: SQLite
+- **You own the database** – your database lives on your side: SQLite
   inside your vault (default) or a PostgreSQL you own. Export everything as
   JSON-LD or GraphML at any time, locally, for free.
 - **Privacy options** – default is hosted processing with zero content
@@ -27,7 +27,7 @@ comes from notes you wrote. No invented examples.
 
 The engine behind all of this is a knowledge graph with a closed verb registry:
 notes connect by meaning (supports, contradicts, is part of, causes, ...), and
-every machine suggestion waits for your confirmation in the review inbox. The
+every machine suggestion waits for your confirmation in the review queue. The
 graph is the engine, not the billboard: what you see are findings, not pictures.
 
 ## Getting started
@@ -38,8 +38,9 @@ graph is the engine, not the billboard: what you see are findings, not pictures.
 3. The completion screen shows findings from your own notes. Start there.
 
 Notes outside Obsidian (plain Markdown folders, Logseq, Bear, OneNote, Evernote,
-Google Drive, Dropbox) join through a single Connect button, with no manual
-token setup.
+Notion, Google Drive, Dropbox, GitLab, GitHub, Jira and Confluence) join through
+a single Connect button, with no manual token setup (only Notion takes an
+internal integration token).
 
 ## Installation
 
@@ -48,7 +49,7 @@ Install from the Obsidian community plugin directory, or manually: download
 `<your vault>/.obsidian/plugins/ontoflow/`, then refresh and enable the plugin
 under Settings → Community plugins.
 
-Minimum Obsidian version: 1.5.0. Works on desktop and mobile. Collecting from
+Minimum Obsidian version: 1.8.7. Works on desktop and mobile. Collecting from
 folders outside the vault (plain Markdown, Logseq, synced folders) and from
 Bear requires file-system access and is desktop-only; on mobile those items
 are explicitly marked unavailable rather than silently empty.
@@ -67,7 +68,7 @@ After you connect, the plugin talks only to:
 | --- | --- | --- |
 | Moayo hub (the address you enter in settings) | Note content to extract, structured results | During indexing and collection. The hub keeps zero content (zero retention) |
 | Your BYO endpoint (the address you enter) | Note content to extract | Only if you configure BYO. In this mode note content never leaves your machine |
-| Your own PostgreSQL (via the hub) | The canonical graph | Only if you choose `pg` as the canonical store |
+| Your own PostgreSQL (via the hub) | Your graph database | Only if you choose `pg` as your database |
 
 - **Account**: ontology extraction (indexing and collection) requires a hub
   account. A free plan is available with no time limit. Everything listed under
@@ -79,10 +80,10 @@ After you connect, the plugin talks only to:
   plugin's settings store (`data.json`) and flow only as request headers. They
   never appear in note content, logs, or error messages.
 - **External source connections** (OneNote, Evernote, Google Drive, Dropbox)
-  complete their OAuth in the hub console. Tokens go straight to the vault
-  there; **this plugin never sees them**. The settings button simply opens that
-  page in your browser.
-- **Works without the hub**: browsing the canonical graph, JSON-LD/GraphML
+  complete their OAuth in the hub console. Tokens go straight to the hub's
+  encrypted credential store; **this plugin never sees them**. The settings
+  button simply opens that page in your browser.
+- **Works without the hub**: browsing your database, JSON-LD/GraphML
   export, the weekly report, and local MCP integration are all local and need
   no network. Export is local and free. The exit door is always open.
 
