@@ -466,10 +466,18 @@ const edgeKey = (e: { s: string; v: string; o: string }) => `${e.s}\u0000${e.v}\
 export async function extractIncremental(
   engine: Engine,
   request: IncrementalRequest,
+  /** 진행 보고 (ISSUE-487 F6) — 노트 하나가 닫힐 때마다 부른다(보류도 닫힘이다). */
+  onNote?: (done: number, total: number) => void,
 ): Promise<IncrementalResponse> {
   validateRegistry(request.registry);
   const budget = request.budget ?? DEFAULT_CONTEXT_BUDGET;
   const response: IncrementalResponse = { add: [], retract: [], proposals: [], held: [] };
+  const total = (request.changes ?? []).length;
+  let done = 0;
+  const tick = (): void => {
+    done += 1;
+    onNote?.(done, total);
+  };
 
   for (const change of request.changes ?? []) {
     const context = (request.context ?? []).filter((e) => e.note === change.note);
@@ -478,6 +486,7 @@ export async function extractIncremental(
       chunks = splitDiff(change.diff, budget);
     } catch (e) {
       response.held.push({ note: change.note, reason: (e as Error).message });
+      tick();
       continue;
     }
 
@@ -492,10 +501,12 @@ export async function extractIncremental(
       if (!(e instanceof HubError)) throw e;
       // 그 노트만 보류 — 다른 노트의 처리는 계속된다 (AC8·AC11)
       response.held.push({ note: change.note, reason: e.problems.join(" · ") });
+      tick();
       continue;
     }
 
     mergeOutputs(response, outputs, change.note, context);
+    tick();
   }
   return response;
 }
@@ -562,7 +573,12 @@ export interface ReindexResponse {
   versions: { registry: number; prompt: string }; // meta 기록용 버전 메타
 }
 
-export async function extractReindex(engine: Engine, request: ReindexRequest): Promise<ReindexResponse> {
+export async function extractReindex(
+  engine: Engine,
+  request: ReindexRequest,
+  /** 진행 보고 (ISSUE-487 F6) — 노트 하나가 닫힐 때마다 부른다(보류도 닫힘이다: 막대가 멈추면 안 된다). */
+  onNote?: (done: number, total: number) => void,
+): Promise<ReindexResponse> {
   validateRegistry(request.registry);
   const budget = request.budget ?? DEFAULT_CONTEXT_BUDGET;
   const response: ReindexResponse = {
@@ -573,6 +589,12 @@ export async function extractReindex(engine: Engine, request: ReindexRequest): P
   };
   const seenEdges = new Set<string>();
   const seenProposals = new Set<string>();
+  const total = (request.notes ?? []).length;
+  let done = 0;
+  const tick = (): void => {
+    done += 1;
+    onNote?.(done, total);
+  };
 
   for (const { note, body } of request.notes ?? []) {
     let chunks: string[];
@@ -580,6 +602,7 @@ export async function extractReindex(engine: Engine, request: ReindexRequest): P
       chunks = splitBody(body, budget);
     } catch (e) {
       response.held.push({ note, reason: (e as Error).message });
+      tick();
       continue;
     }
 
@@ -593,6 +616,7 @@ export async function extractReindex(engine: Engine, request: ReindexRequest): P
     } catch (e) {
       if (!(e instanceof HubError)) throw e;
       response.held.push({ note, reason: e.problems.join(" · ") });
+      tick();
       continue;
     }
 
@@ -619,6 +643,7 @@ export async function extractReindex(engine: Engine, request: ReindexRequest): P
         response.proposals.push({ verbRaw: p.verbRaw, superclassHint: p.superclass, note });
       }
     }
+    tick();
   }
   return response;
 }

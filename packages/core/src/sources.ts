@@ -212,3 +212,42 @@ export async function collectRegisteredSources(
   await saveSourceStates(io, vaultDir, states);
   return out;
 }
+
+// ---- 이슈 → 노트 md 합성 (ISSUE-529) — GitHub·GitLab·Jira 가 같은 꼴을 쓴다 ----
+// 메타데이터는 위키링크 줄로 선다: 수집의 위키링크 승격(설계 결정 ⓓ — related-to·fallback·
+// 엔진 0)이 그대로 사람 엣지를 만들어 새 와이어·동사·스키마가 0 이다. 코멘트 본문은 노트에
+// 실려 추출 재료가 된다 — 「결의·판정이 코멘트에 산다」 운영 꼴의 수리.
+
+export interface SourceIssueMeta {
+  author?: string | null;
+  assignees?: string[];
+  body: string | null;
+}
+
+export interface SourceIssueComment {
+  author: string | null;
+  /** RFC3339 — 코멘트 절의 시각 표기. */
+  createdAt: string;
+  bodyMd: string;
+}
+
+/** 위키링크 안전화 — 트래커 계정명은 대개 통과: 링크 문법 문자만 접는다. */
+export const wikiSafeName = (name: string): string => name.replace(/[[\]|#^\n]/g, "").trim();
+
+export function sourceIssueMd(meta: SourceIssueMeta, comments: readonly SourceIssueComment[]): string {
+  const lines: string[] = [];
+  const author = meta.author ?? null;
+  if (author !== null && wikiSafeName(author) !== "") lines.push(`작성: [[${wikiSafeName(author)}]]`);
+  const assignees = (meta.assignees ?? []).map(wikiSafeName).filter((a) => a !== "");
+  if (assignees.length > 0) lines.push(`담당: ${assignees.map((a) => `[[${a}]]`).join(" · ")}`);
+  if (lines.length > 0) lines.push("");
+  lines.push(meta.body ?? "");
+  if (comments.length > 0) {
+    lines.push("", "## 코멘트");
+    for (const c of comments) {
+      const who = c.author !== null && wikiSafeName(c.author) !== "" ? `[[${wikiSafeName(c.author)}]]` : "(알 수 없음)";
+      lines.push("", `### ${who} — ${c.createdAt}`, "", c.bodyMd);
+    }
+  }
+  return lines.join("\n");
+}

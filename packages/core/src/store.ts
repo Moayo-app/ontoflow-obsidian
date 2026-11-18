@@ -456,6 +456,12 @@ export async function rebuild(
 export interface DictionaryNode {
   name: string;
   aliases: string[];
+  /**
+   * 연결 차수 (ISSUE-554) — 판정 후보 동률의 보조 축: 같은 어휘 유사라면 허브(고차수) 쪽이
+   * 후보에 남아야 조망을 가장 크게 바꾸는 병합이 상한에 밀리지 않는다. 선택 칸 — 문맥 보강
+   * 노드·구 사전에는 없고, 그때는 0 으로 읽는다.
+   */
+  degree?: number;
 }
 
 // 허브는 무상태라 사전이 요청에 실려 간다 — 출처는 언제나 정본이다 (설계 결정 ⓐ).
@@ -477,6 +483,16 @@ export function loadDictionary(store: GraphStore): NormalizationDictionary {
     nodes.push(node);
   }
   nodeStmt.free();
+  // 차수 (ISSUE-554) — mapOf(#546)와 같은 한 패스 집계: 상관 서브쿼리는 O(노드×엣지)다.
+  const degStmt = store.db.prepare(
+    "SELECT id, COUNT(*) AS c FROM (SELECT s AS id FROM edges UNION ALL SELECT o AS id FROM edges WHERE o <> s) GROUP BY id",
+  );
+  while (degStmt.step()) {
+    const row = degStmt.getAsObject();
+    const node = byId.get(row.id as string);
+    if (node !== undefined) node.degree = row.c as number;
+  }
+  degStmt.free();
   const aliasStmt = store.db.prepare("SELECT node_id, alias FROM aliases ORDER BY alias");
   while (aliasStmt.step()) {
     const row = aliasStmt.getAsObject();

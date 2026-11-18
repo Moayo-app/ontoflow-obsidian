@@ -11,7 +11,7 @@ import {
   type ReindexRequest,
   type ReindexResponse,
 } from "./hub.js";
-import { applyResolutions, normalizeEntities, type MergeProposal } from "./normalize.js";
+import { applyResolutions, normalizeEntities, resolveDeixis, type MergeProposal } from "./normalize.js";
 import type { EdgeRetract, EdgeWrite, NormalizationDictionary } from "./store.js";
 
 // 정규화가 응답에 더하는 것 — 둘 다 정본 면의 입력 재료다.
@@ -70,15 +70,26 @@ async function normalizeOutputs(
   dictionary: NormalizationDictionary,
   add: EdgeWrite[],
   retract: EdgeRetract[],
+  onName?: (done: number, total: number) => void,
 ): Promise<{ add: EdgeWrite[]; retract: EdgeRetract[] } & NormalizedExtras> {
-  const names = [...add, ...retract].flatMap((e) => [e.s, e.o]);
-  if (names.length === 0) return { add, retract, aliases: [], merges: [] };
+  // 지시어 해소 (ISSUE-519) — 「이 티켓」이 이름으로 판정대에 오르기 전에 출처 노트 제목으로
+  // 풀린다. 결정 연산(엔진 0)이라 이 단의 비용은 0 이고, 지시어 없는 입력은 그대로 지난다.
+  const addResolved = resolveDeixis(add, (e) => e.src.note ?? "");
+  const retractResolved = resolveDeixis(retract, (e) => e.note ?? "");
+  const names = [...addResolved, ...retractResolved].flatMap((e) => [e.s, e.o]);
+  if (names.length === 0) return { add: addResolved, retract: retractResolved, aliases: [], merges: [] };
   // 판정 실패는 normalize.ts 의 보수 기본(미병합 통과·기록)이 삼킨다 (#9 AC4) — 여기서
   // 추출 산출이 유실되는 경로는 없다.
-  const result = await normalizeEntities(engine, { names, dictionary });
+  const result = await normalizeEntities(engine, { names, dictionary }, onName);
   return {
-    add: dedupeBy(applyResolutions(add, result.resolutions), (e) => `${e.s}\u0000${e.v}\u0000${e.o}\u0000${e.src.note}`),
-    retract: dedupeBy(applyResolutions(retract, result.resolutions), (e) => `${e.s}\u0000${e.v}\u0000${e.o}\u0000${e.note}`),
+    add: dedupeBy(
+      applyResolutions(addResolved, result.resolutions),
+      (e) => `${e.s}\u0000${e.v}\u0000${e.o}\u0000${e.src.note}`,
+    ),
+    retract: dedupeBy(
+      applyResolutions(retractResolved, result.resolutions),
+      (e) => `${e.s}\u0000${e.v}\u0000${e.o}\u0000${e.note}`,
+    ),
     aliases: result.aliases,
     merges: result.proposals,
   };
@@ -89,13 +100,17 @@ async function normalizeOutputs(
 export async function processIncremental(
   engine: Engine,
   request: PipelineIncrementalRequest,
+  /** 진행 보고 (ISSUE-487 F6) — 추출 단의 노트 닫힘을 센다. */
+  onNote?: (done: number, total: number) => void,
+  /** 이름 진행 (ISSUE-517) — 정규화 단은 분모가 다르다(노트가 아니라 고유 이름): 제 콜백이 있다. */
+  onName?: (done: number, total: number) => void,
 ): Promise<PipelineIncrementalResponse> {
-  const extracted = await extractIncremental(engine, request);
+  const extracted = await extractIncremental(engine, request, onNote);
   const dictionary = withNames(
     request.dictionary ?? emptyDictionary(),
     (request.context ?? []).flatMap((e) => [e.s, e.o]),
   );
-  const normalized = await normalizeOutputs(engine, dictionary, extracted.add, extracted.retract);
+  const normalized = await normalizeOutputs(engine, dictionary, extracted.add, extracted.retract, onName);
   return {
     add: normalized.add,
     retract: normalized.retract,
@@ -111,13 +126,18 @@ export async function processIncremental(
 export async function processReindex(
   engine: Engine,
   request: PipelineReindexRequest,
+  /** 진행 보고 (ISSUE-487 F6) — 추출 단의 노트 닫힘을 센다. */
+  onNote?: (done: number, total: number) => void,
+  /** 이름 진행 (ISSUE-517) — 최초 색인의 정규화는 수십 분이다: 침묵이 멈춤으로 읽히지 않게. */
+  onName?: (done: number, total: number) => void,
 ): Promise<PipelineReindexResponse> {
-  const extracted = await extractReindex(engine, request);
+  const extracted = await extractReindex(engine, request, onNote);
   const normalized = await normalizeOutputs(
     engine,
     request.dictionary ?? emptyDictionary(),
     extracted.edges,
     [],
+    onName,
   );
   return {
     edges: normalized.add,

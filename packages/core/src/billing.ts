@@ -120,6 +120,15 @@ export interface Account {
    * 세션에서 자연 보정된다(마이그레이션 0).
    */
   emailVerifiedAt?: string | null;
+  /**
+   * 자동 가져오기 끔 표식 (ISSUE-516 — 판정 「기본 켬 · 일 1회」) — 기본이 켬이라 **끈
+   * 사실만** 기록한다: 칸 부재·false = 켬. 마케팅 동의(기본 미동의·opt-in 기록)와 거울상이다 —
+   * 어느 쪽이든 「기본값과 다른 선택」이 기록되는 쪽이고, 그래야 마이그레이션이 0 이다.
+   */
+  autoPullOff?: boolean;
+  /** 자동 가져오기가 마지막으로 **시작**된 시각 (ISSUE-516) — 일 1회 판정의 기준점. 완료가
+   * 아니라 시작에 찍는다: 실패해도 다음 날이다(재시도 폭주 없음 — 수동 당김이 늘 출구다). */
+  autoPullAt?: string;
 }
 
 /**
@@ -258,6 +267,15 @@ export const SENSITIVE_CONSENT_TEXT =
   "노트에 담긴 민감정보(건강·신념 등)가 AI 추출 처리에 포함될 수 있습니다. 이 처리에 별도로 동의합니다. " +
   "회원님이 직접 연결한 외부 소스(OneNote·Evernote·Google Drive·Dropbox 등)의 노트 내용 수집·처리도 " +
   "이 동의의 범위에 포함됩니다. 동의 전에는 어떤 추출 처리도 시작되지 않으며, 동의는 언제든 철회할 수 있습니다.";
+
+/**
+ * 참고 번역 (ISSUE-484) — ko 가 법적 정본이고 en 은 **병기**다(콘솔 ISSUE-438 ② 와 같은 규율):
+ * 문자열 자체가 그 사실을 먼저 말한다. en UI 도 ko 문안을 그대로 그리고 이 줄을 밑에 단다 —
+ * en 이 단독으로 법적 고지로 서는 꼴이 없어 CONSENT_VERSION 도, 처리방침 편입 문안도 무변이다.
+ * 렌더 자리 둘(콘솔 consentTextEn · 플러그인 온보딩)이 이 한 벌을 쓴다 — 번역이 갈리면 안 된다.
+ */
+export const SENSITIVE_CONSENT_TEXT_EN =
+  "Reference translation — the Korean text above is the binding original: Sensitive information contained in your notes (health, beliefs, etc.) may be included in AI extraction processing, and you consent to that processing separately. Collection and processing of note content from external sources you connect yourself (OneNote, Evernote, Google Drive, Dropbox, etc.) is also covered by this consent. No extraction starts before you consent, and you can withdraw consent at any time.";
 
 // ---- 소유 경계 (AC9 · 스펙 AC33) — 남의 계정은 403, 처리 0. 모든 입구가 먼저 지난다 ----
 
@@ -1173,22 +1191,34 @@ export function decideCreditSpend(
     usage.period === period ? usage : { ...usage, period, credits: 0, chargedNotes: {}, notices: {} };
 
   if (request.kind === "initial-index") {
-    // 최초 색인은 소비 0 · 영구 1회 (AC7·AC10). 재실행(전체 재색인)은 요금제 가용이 든다.
-    if (!plan.reindex && current.initialIndexAt !== null) {
+    // 최초 색인은 소비 0 · 영구 1회 (AC7·AC10). 재실행은 거절하지 않는다 (ISSUE-564) —
+    // ⛔ 옛 402(「재색인은 구독 몫」)는 자리 반출+소멸 뒤 재탄생(rev 0)을 영원히 막아
+    //    「언제든 전량 반출과 소멸이 가능합니다」를 거짓으로 만들었다 (Henry 실왕복, rev 82).
+    // ⭐ 그렇다고 장부 리셋(재탄생 = 공짜 최초)도 아니다 — 그건 「소진 → 소멸 → 재탄생」으로
+    //    월 상한을 우회시킨다(Henry 어뷰징 지적). 답은 **증분 과금 의미론으로의 폴스루**다:
+    //    유지권(chargedNotes — 계정 축이라 자리 소멸에도 산다)이 같은 달 재추출을 0 으로
+    //    만들고, 새·변경 노트만 정상 소비된다 — 재건은 서고, 장부 우회 소득은 0 이다.
+    //    plan.reindex(유료 재색인 가용)는 종전대로 소비 0 이다.
+    if (plan.reindex || current.initialIndexAt === null) {
+      // ⭕ 유지권 스탬프 (Henry 승인, 2026-11-18 — 「죄책감을 들게 하는 작업이 아니다」) —
+      // 소비 0 경로도 「그 달 처리된 노트」다: 경로 불문 한 문장(「그 달 그 노트의 최신
+      // 유지권」)이 되어, 최초 색인 직후의 소멸→재건이 같은 달이면 진짜 0 으로 선다.
+      // 어뷰징 소득 무변 — 재처리는 이미 그 달 받은 처리의 반복이고, 새 처리량은 그대로
+      // 과금되며, 빈도는 크레딧이 아니라 토큰 버킷의 몫이다 (#353 — 제8조③).
+      const nextCharged = { ...(current.chargedNotes ?? {}) };
+      for (const note of request.notes) {
+        if ((nextCharged[note.id] ?? 0) > 0) continue;
+        nextCharged[note.id] = creditsForChars(note.chars);
+      }
       return {
-        allowed: false,
-        status: 402,
-        reason: "최초 전체 색인은 1회입니다 — 재색인은 구독 몫입니다, 업그레이드해 주세요",
-        upgrade: true,
+        allowed: true,
+        usage: { ...current, initialIndexAt: current.initialIndexAt ?? now, chargedNotes: nextCharged, lastAt: now },
+        packs: [...packs],
+        creditsSpent: 0,
+        notices: [], // 소비 0 — 임계가 움직이지 않는다
       };
     }
-    return {
-      allowed: true,
-      usage: { ...current, initialIndexAt: current.initialIndexAt ?? now, lastAt: now },
-      packs: [...packs],
-      creditsSpent: 0,
-      notices: [], // 소비 0 — 임계가 움직이지 않는다
-    };
+    // 무료 층 재실행 — 아래 증분 가격으로 떨어진다 (유지권 교차).
   }
 
   const charged = current.chargedNotes ?? {};

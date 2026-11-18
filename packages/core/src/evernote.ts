@@ -8,7 +8,7 @@
 // 메아리 차단(AC4)은 태그(목록 단계 필터 — 본문 호출조차 없다) + 본문 frontmatter 마커
 // (collect.isMachineAuthored 가 무는 꼴)의 이중 축이다.
 import type { CollectState, VaultFileStat } from "./collect.js";
-import { sourceEntryPath, sourceKnownStats, type SourceReader } from "./sources.js";
+import { sourceEntryPath, sourceIssueMd, sourceKnownStats, type SourceReader } from "./sources.js";
 
 export class EvernoteError extends Error {
   constructor(readonly problems: string[]) {
@@ -46,6 +46,8 @@ export interface EvernoteNoteStat {
   updated: number;
   /** 태그 — EVERNOTE_MARKER_TAG 가 있으면 우리 산출이라 수집 제외다 (#98 AC4). */
   tags?: string[];
+  /** 작성자 (ISSUE-540) — 노트 속성 author 문자열 그대로. 코멘트 API 는 없다(비채택 기록). */
+  author?: string | null;
 }
 
 // 읽기 연산 둘뿐이다 — 노트북 한 곳의 목록·본문 (MCP search_notes·get_note). 노트북 id 는
@@ -188,7 +190,10 @@ export async function pullEvernoteChanges(
       guid: stat.guid,
       title: stat.title,
       mtime: stat.updated,
-      md: changed ? noteContentToMd(await client.getNoteContent(stat.guid)) : null,
+      // 작성 줄 합성 (ISSUE-540) — 코멘트 없는 소스라 작성자만: 속성 부재면 본문 그대로다.
+      md: changed
+        ? sourceIssueMd({ author: stat.author, body: noteContentToMd(await client.getNoteContent(stat.guid)) }, [])
+        : null,
     });
   }
   return { syncState: cursor, unchanged: false, notes };

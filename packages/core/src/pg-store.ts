@@ -144,6 +144,53 @@ export function dumpCanonical(store: GraphStore, registry: Registry, rev: number
   };
 }
 
+// ---- 정본 행 검증 (ISSUE-569) — 닫힌 enum·범위를 작업본 DDL(store.ts 의 CHECK)과 한 벌로
+// 미리 검사한다. 정본 PG 는 사용자 소유·사용자 편집 항상 승이라 비정형 행이 손편집 한 줄로
+// 들어올 수 있는데, PG 쪽 DDL 엔 CHECK 가 없어 flush 는 받아 두고, 모든 읽기(지도·인사이트·
+// 검색)가 작업본 INSERT 의 CHECK 에서 맨 500 으로 죽었다. 수리는 「두 문이 같은 잣대」 —
+// flush 는 쓰기 전에, restore 는 작업본을 세우기 전에 같은 검사로 행을 짚어 422 를 낸다.
+
+const NODE_KINDS = new Set(["file", "concept"]);
+const EDGE_BY = new Set(["auto", "user"]);
+const EDGE_ORIGINS = new Set(["extract", "wikilink", "manual"]);
+const PROJECTION_DESTS = new Set(["notion", "postgres"]);
+const SHARE_KINDS = new Set(["note", "node"]);
+/** 문제 행 나열 상한 — 전부 실으면 손편집 대량 오염에서 응답이 로그가 된다. */
+const ROW_PROBLEM_CAP = 8;
+
+export function assertCanonicalRows(dump: CanonicalDump): void {
+  const problems: string[] = [];
+  for (const n of dump.nodes) {
+    if (!NODE_KINDS.has(n.kind)) {
+      problems.push(`nodes id=${n.id}: kind '${n.kind}' — 'file' 또는 'concept' 만 받는다`);
+    }
+  }
+  for (const e of dump.edges) {
+    if (!(typeof e.confidence === "number" && e.confidence >= 0 && e.confidence <= 1)) {
+      problems.push(`edges id=${e.id}: confidence '${String(e.confidence)}' — 0~1 범위여야 한다`);
+    }
+    if (!EDGE_BY.has(e.by)) problems.push(`edges id=${e.id}: by '${e.by}' — 'auto' 또는 'user' 만 받는다`);
+    if (!EDGE_ORIGINS.has(e.origin)) {
+      problems.push(`edges id=${e.id}: origin '${e.origin}' — 'extract'·'wikilink'·'manual' 만 받는다`);
+    }
+  }
+  for (const pr of dump.projections) {
+    if (!PROJECTION_DESTS.has(pr.dest)) {
+      problems.push(`projections local_id=${pr.local_id}: dest '${pr.dest}' — 'notion' 또는 'postgres' 만 받는다`);
+    }
+  }
+  for (const sh of dump.shares ?? []) {
+    if (!SHARE_KINDS.has(sh.kind)) {
+      problems.push(`shares ref=${sh.ref}: kind '${sh.kind}' — 'note' 또는 'node' 만 받는다`);
+    }
+  }
+  if (problems.length > 0) {
+    const shown = problems.slice(0, ROW_PROBLEM_CAP);
+    if (problems.length > shown.length) shown.push(`외 ${problems.length - shown.length}건 — 정본 행을 교정한 뒤 다시 시도한다`);
+    throw new PgStoreError(422, ["정본 행이 깨져 있다 — 아래 행을 교정해야 한다", ...shown]);
+  }
+}
+
 /** 덤프 → 작업본 — 기존 판정 엔진(applyPatch·projectionDataFor·…)이 그대로 도는 자리다. */
 export async function restoreCanonical(
   io: FileIo,
@@ -152,6 +199,7 @@ export async function restoreCanonical(
   if (dump.schema !== CANONICAL_DUMP_SCHEMA) {
     throw new PgStoreError(422, [`덤프 스키마가 맞지 않는다 (기대 ${CANONICAL_DUMP_SCHEMA})`]);
   }
+  assertCanonicalRows(dump); // 손편집 비정형 행 — 작업본 CHECK 의 맨 500 대신 행을 짚는 422 (ISSUE-569)
   const registry = parseRegistry(dump.registryYml);
   const store = await openWorkingStore(io);
   const db = store.db;
@@ -190,7 +238,13 @@ export async function restoreCanonical(
     db.exec("COMMIT");
   } catch (e) {
     db.exec("ROLLBACK");
-    throw e;
+    // 뒷문 (ISSUE-569) — enum 검사 밖의 제약 위반(이름 UNIQUE·논리 엣지 중복 등)도 사용자
+    // 데이터의 꼴 문제다: 맨 500 대신 422 로 원문 메시지를 실어 교정 좌표를 준다.
+    if (e instanceof PgStoreError) throw e;
+    throw new PgStoreError(422, [
+      "정본 복원이 실패했다 — 정본 행의 제약 위반이다 (행을 교정한 뒤 다시 시도한다)",
+      String(e instanceof Error ? e.message : e),
+    ]);
   }
   return { store, registry };
 }
@@ -232,6 +286,23 @@ function ddl(schema: string): PgStatement[] {
       // 반영이 메일함을 지우지 않는다). 비우는 쪽은 플러그인(드레인 → vault 수집함)이다.
       sql: `CREATE TABLE IF NOT EXISTS ${s}.canonical_inbox(
         id TEXT PRIMARY KEY, title TEXT NOT NULL, md TEXT NOT NULL, captured_at TEXT NOT NULL)`,
+    },
+    {
+      // 허브 구동 당김 장부 (ISSUE-494) — 플러그인의 sources.json 과 같은 몫(증분 커서 + 본문
+      // 캐시)이 사용자 자리에 산다: 허브 보관 0 그대로, 소유·반출·소멸이 자리와 운명을 같이한다.
+      // 덤프·flush 전량 교체의 밖이다 (TABLES 비포함) — 자리 이관에 안 실리면 다음 당김이 전량
+      // 재대조로 자가 복구한다(같은 달 재추출은 무소비 장부가 막는다 — #193 유지권).
+      sql: `CREATE TABLE IF NOT EXISTS ${s}.hub_pull_state(
+        id INTEGER PRIMARY KEY, doc TEXT NOT NULL, saved_at TEXT NOT NULL)`,
+    },
+    {
+      // 정리 제안 보류함 (ISSUE-556) — 임계 미만 병합 후보(검토함 S2 의 분모 압축 착지).
+      // 덤프·flush 전량 교체의 밖이다 (TABLES 비포함 — 수집함과 같은 결: 반영이 보류함을 지우지
+      // 않는다). 평결의 영속 자리는 이 표가 아니다 — 합치기 = 별칭(+병합 수술), 아니요 = 분리
+      // 박제(canonical_distinctions): 정규화가 그 둘을 이미 다시 묻지 않으므로(별칭 히트·후보
+      // 제외 AC5), 평결난 행은 지우기만 하면 재생성이 구조적으로 없다.
+      sql: `CREATE TABLE IF NOT EXISTS ${s}.canonical_proposals(
+        name TEXT NOT NULL, node TEXT NOT NULL, confidence REAL NOT NULL, at TEXT NOT NULL, PRIMARY KEY(name, node))`,
     },
   ];
 }
@@ -337,6 +408,7 @@ export async function flushCanonicalToPg(
   if (dump.schema !== CANONICAL_DUMP_SCHEMA) {
     throw new PgStoreError(422, [`덤프 스키마가 맞지 않는다 (기대 ${CANONICAL_DUMP_SCHEMA})`]);
   }
+  assertCanonicalRows(dump); // 받는 문에서 거절해야 읽기 화면 전부가 인질이 되지 않는다 (ISSUE-569)
   const s = schema;
   const next = dump.rev + 1;
   const statements = canonicalReplaceStatements(schema, dump, next);
@@ -477,6 +549,35 @@ export async function restoreInbox(
   ]);
 }
 
+// ---- 허브 구동 당김 장부 (ISSUE-494) — 문서 하나(JSON 텍스트)의 적재·치환뿐이다. 꼴의
+// 해석(sources.json 스키마)은 수집 쪽(core sources.ts)이 들고, 여기는 자리만 빌려준다 ----
+
+export async function loadPullState(session: PgCanonicalSession, schema: string): Promise<string | null> {
+  assertCanonicalSchema(schema);
+  await session.transact(ddl(schema)); // 멱등 — 첫 당김이 적재(탄생)보다 먼저 올 수 있다
+  const rows = (await session.query(`SELECT doc FROM ${schema}.hub_pull_state WHERE id = 1`)) as {
+    doc: string;
+  }[];
+  return rows[0]?.doc ?? null;
+}
+
+export async function savePullState(
+  session: PgCanonicalSession,
+  schema: string,
+  doc: string,
+  now: string,
+): Promise<void> {
+  assertCanonicalSchema(schema);
+  await session.transact([
+    ...ddl(schema),
+    {
+      sql: `INSERT INTO ${schema}.hub_pull_state(id, doc, saved_at) VALUES (1,$1,$2)
+        ON CONFLICT(id) DO UPDATE SET doc = EXCLUDED.doc, saved_at = EXCLUDED.saved_at`,
+      params: [doc, now],
+    },
+  ]);
+}
+
 /**
  * ⚠️ 한 판 드레인 — SELECT 직후 DELETE 라 응답 유실 시 캡처가 소실되는 창이 있다 (#439 ③).
  * 새 경로는 peekInbox→ackInbox 2단이고, 이 함수는 배포된 구버전 플러그인의 `/inbox/drain`
@@ -491,4 +592,152 @@ export async function drainInbox(session: PgCanonicalSession, schema: string): P
     rows.map((r) => r.id),
   );
   return rows.map((r) => ({ title: r.title, md: r.md, capturedAt: r.capturedAt }));
+}
+
+// ---- 정리 제안 (ISSUE-556) — 임계 미만 병합 후보의 보류함과 평결 집행. 사용자 PG 안이다:
+// 허브 보관 0 그대로, 소유·반출·소멸이 자리와 운명을 같이한다 ----
+
+export interface MergeProposalRow {
+  name: string;
+  node: string;
+  confidence: number;
+  at: string;
+  /** 영향도 — 두 끝 노드의 연결 차수 합: 조망을 가장 크게 바꾸는 병합이 카드 맨 앞에 선다. */
+  weight: number;
+}
+
+/** 당김이 끝날 때마다 upsert — 같은 쌍은 최신 확신도·시각으로 덮는다 (행 증식 0). */
+export async function saveMergeProposalsPg(
+  session: PgCanonicalSession,
+  schema: string,
+  proposals: readonly { name: string; node: string; confidence: number }[],
+  now: string,
+): Promise<void> {
+  assertCanonicalSchema(schema);
+  if (proposals.length === 0) return;
+  await session.transact(
+    proposals.map((p) => ({
+      sql: `INSERT INTO ${schema}.canonical_proposals(name, node, confidence, at) VALUES ($1,$2,$3,$4)
+        ON CONFLICT (name, node) DO UPDATE SET confidence = excluded.confidence, at = excluded.at`,
+      params: [p.name, p.node, p.confidence, now],
+    })),
+  );
+}
+
+/** 영향도 상위 카드 재료 — 차수는 mapOf(#546)와 같은 한 패스 집계다. totals 는 「외 n건」 줄. */
+export async function listMergeProposalsPg(
+  session: PgCanonicalSession,
+  schema: string,
+  limit = 20,
+): Promise<{ proposals: MergeProposalRow[]; total: number }> {
+  assertCanonicalSchema(schema);
+  const s = schema;
+  const totalRows = await session.query(`SELECT COUNT(*) AS c FROM ${s}.canonical_proposals`, []);
+  const total = Number((totalRows[0] as { c?: unknown } | undefined)?.c ?? 0);
+  const rows = await session.query(
+    `WITH deg AS (
+       SELECT id, COUNT(*) AS c
+       FROM (SELECT s AS id FROM ${s}.canonical_edges UNION ALL SELECT o AS id FROM ${s}.canonical_edges WHERE o <> s) AS de
+       GROUP BY id)
+     SELECT p.name, p.node, p.confidence, p.at, COALESCE(dn.c, 0) + COALESCE(dm.c, 0) AS weight
+     FROM ${s}.canonical_proposals p
+     LEFT JOIN ${s}.canonical_nodes n ON n.name = p.node
+     LEFT JOIN deg dn ON dn.id = n.id
+     LEFT JOIN ${s}.canonical_nodes m ON m.name = p.name
+     LEFT JOIN deg dm ON dm.id = m.id
+     ORDER BY weight DESC, p.confidence DESC, p.name
+     LIMIT $1`,
+    [limit],
+  );
+  return {
+    total,
+    proposals: rows.map((r) => {
+      const row = r as { name: string; node: string; confidence: unknown; at: string; weight: unknown };
+      return {
+        name: row.name,
+        node: row.node,
+        confidence: Number(row.confidence),
+        at: row.at,
+        weight: Number(row.weight),
+      };
+    }),
+  };
+}
+
+/** 아니요 — 분리 박제 (정규화 AC5 가 같은 쌍을 다시 묻지 않는다) + 보류 행 소멸. 사전순 쌍. */
+export async function recordDistinctionPg(
+  session: PgCanonicalSession,
+  schema: string,
+  aIn: string,
+  bIn: string,
+): Promise<void> {
+  assertCanonicalSchema(schema);
+  const [a, b] = aIn < bIn ? [aIn, bIn] : [bIn, aIn];
+  await session.transact([
+    {
+      sql: `INSERT INTO ${schema}.canonical_distinctions(a, b) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+      params: [a, b],
+    },
+    {
+      // 파라미터 재사용 금지 — 가짜 PG 의 위치 치환 (위 mergeNodesPg 와 같은 이유).
+      sql: `DELETE FROM ${schema}.canonical_proposals WHERE (name = $1 AND node = $2) OR (name = $3 AND node = $4)`,
+      params: [a, b, b, a],
+    },
+  ]);
+}
+
+/**
+ * 합치기 — source 노드를 target 으로 접는 병합 수술. 한 트랜잭션: 엣지 끝점 재지정 →
+ * 자기 지시화된 엣지 소거(정보 0 — resolveDeixis 와 같은 결) → 별칭 이사 → source 이름을
+ * target 의 별칭으로 박제(**판정의 영속** — 소스가 계속 옛 표기를 말해도 재수집이 별칭
+ * 히트로 접는다) → source 노드 소거 → 그 이름이 낀 보류 행 전부 소거 → rev +1(진행 중이던
+ * flush 는 rev 가드 409 로 물러나 재적재한다 — AC5 그대로).
+ *
+ * 낡은 제안(재색인·선행 병합으로 이름이 사라짐)은 수술 없이 행만 치운다 — 카드는 소멸하고
+ * 그래프는 무변이다. ⚠️ 같은 별칭이 제3 노드에도 있는 모호 쌍은 그대로 둔다(두 노드 별칭
+ * 공존 — 재색인이 정리한다): recordAliases 의 거부와 달리 수술을 세우지 않는 보수 선택.
+ */
+export async function mergeNodesPg(
+  session: PgCanonicalSession,
+  schema: string,
+  source: string,
+  target: string,
+): Promise<{ merged: boolean }> {
+  assertCanonicalSchema(schema);
+  const s = schema;
+  const rows = (await session.query(`SELECT id, name FROM ${s}.canonical_nodes WHERE name IN ($1, $2)`, [
+    source,
+    target,
+  ])) as { id: string; name: string }[];
+  const idOf = new Map(rows.map((r) => [r.name, r.id]));
+  const sourceId = idOf.get(source);
+  const targetId = idOf.get(target);
+  if (sourceId === undefined || targetId === undefined || sourceId === targetId) {
+    await session.transact([
+      {
+        sql: `DELETE FROM ${s}.canonical_proposals WHERE (name = $1 AND node = $2) OR (name = $3 AND node = $4)`,
+        params: [source, target, target, source],
+      },
+    ]);
+    return { merged: false };
+  }
+  await session.transact([
+    { sql: `UPDATE ${s}.canonical_edges SET s = $1 WHERE s = $2`, params: [targetId, sourceId] },
+    { sql: `UPDATE ${s}.canonical_edges SET o = $1 WHERE o = $2`, params: [targetId, sourceId] },
+    // ⚠️ 파라미터 재사용($1 두 번) 금지 — 테스트의 가짜 PG 가 $n 을 위치 ? 로 치환한다.
+    { sql: `DELETE FROM ${s}.canonical_edges WHERE s = $1 AND o = $2`, params: [targetId, targetId] },
+    {
+      sql: `INSERT INTO ${s}.canonical_aliases(node_id, alias) SELECT $1, alias FROM ${s}.canonical_aliases WHERE node_id = $2 ON CONFLICT DO NOTHING`,
+      params: [targetId, sourceId],
+    },
+    { sql: `DELETE FROM ${s}.canonical_aliases WHERE node_id = $1`, params: [sourceId] },
+    {
+      sql: `INSERT INTO ${s}.canonical_aliases(node_id, alias) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+      params: [targetId, source],
+    },
+    { sql: `DELETE FROM ${s}.canonical_nodes WHERE id = $1`, params: [sourceId] },
+    { sql: `DELETE FROM ${s}.canonical_proposals WHERE name = $1 OR node = $1`, params: [source] },
+    { sql: `UPDATE ${s}.canonical_meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key = 'rev'`, params: [] },
+  ]);
+  return { merged: true };
 }

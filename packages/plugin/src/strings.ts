@@ -6,6 +6,8 @@
 //
 // 보간은 콘솔과 같은 {토큰} 치환이다 — 템플릿 리터럴을 카탈로그에 두면 두 벌이 코드가 된다.
 
+import { SENSITIVE_CONSENT_TEXT_EN } from "./core.js"; // 법적 문안의 한 벌 원천 (ISSUE-484) — 번역이 콘솔과 갈리지 않는다
+
 export type PluginLocale = "ko" | "en";
 
 /** 옵시디언 getLanguage() 의 값 → 카탈로그 로케일. ko 만 ko — 그 외·빈 값은 en 이다. */
@@ -126,6 +128,11 @@ export interface PluginStrings {
   useThisVaultBtn: string;
   stepConsent: string;
   consentBtn: string;
+  /**
+   * 동의 문안 en 병기 (ISSUE-484) — 콘솔 ISSUE-438 ② 와 같은 규율: ko 문안(view.consentText)이
+   * 법적 정본으로 항상 서고, en 셸은 참고 번역을 밑에 단다. ko 로케일은 "" — 병기가 서지 않는다.
+   */
+  consentTextEn: string;
   stepInitialIndex: string;
   doneSuffix: string;
   notYetSuffix: string;
@@ -285,6 +292,7 @@ export const PLUGIN_STRINGS: Record<PluginLocale, PluginStrings> = {
     useThisVaultBtn: "이 vault 사용",
     stepConsent: "민감정보 별도 동의 {state}",
     consentBtn: "동의합니다",
+    consentTextEn: "", // ko 정본 화면 — 병기가 서지 않는다
     stepInitialIndex: "최초 색인 — {progress}{done}",
     doneSuffix: " (완료)",
     notYetSuffix: "— 전",
@@ -451,6 +459,7 @@ export const PLUGIN_STRINGS: Record<PluginLocale, PluginStrings> = {
     useThisVaultBtn: "Use this vault",
     stepConsent: "Sensitive-data consent {state}",
     consentBtn: "I consent",
+    consentTextEn: SENSITIVE_CONSENT_TEXT_EN,
     stepInitialIndex: "Initial index — {progress}{done}",
     doneSuffix: " (done)",
     notYetSuffix: "— pending",

@@ -12,7 +12,7 @@
 // ACL 유도 자동 공유가 애초에 없다. `confidential` 은 **메타데이터로 보존**만 한다 — 이
 // 모듈 산출 어디에도 공유 기록 꼴이 없는 것이 구조 증명이다.
 import type { CollectState, VaultFileStat } from "./collect.js";
-import { sourceEntryPath, sourceKnownStats, type SourceReader } from "./sources.js";
+import { sourceEntryPath, sourceIssueMd, sourceKnownStats, type SourceReader } from "./sources.js";
 import { GITLAB_ALLOWED_SCOPES } from "./oauth-scopes.js"; // 잎 — 금고 본체를 번들로 끌고 가지 않는다
 
 export class GitLabError extends Error {
@@ -57,6 +57,16 @@ export interface GitLabIssueEntry {
   confidential: boolean;
   /** 목록 응답에 본문이 동승한다 — 항목별 본문 호출 0 이 이 API 의 값이다. */
   descriptionMd: string | null;
+  /** 작성자·담당자 username (ISSUE-529) — 목록 응답 동승분: 추가 호출 0. 구 클라이언트는 부재. */
+  author?: string | null;
+  assignees?: string[];
+}
+
+/** 이슈 노트(코멘트) 한 건 (ISSUE-529) — 시스템 노트(라벨 변경 류) 제외는 클라이언트 몫이다. */
+export interface GitLabIssueNote {
+  author: string | null;
+  createdAt: string;
+  bodyMd: string;
 }
 
 export interface GitLabWikiPage {
@@ -72,6 +82,9 @@ export interface GitLabIngestClient {
   listIssues(projectPath: string, updatedAfter: string | null): Promise<GitLabIssueEntry[]>;
   /** 위키 전량(본문 동승) — 목록에 시각이 없어 증분 문이 따로 없다. */
   listWikiPages(projectPath: string): Promise<GitLabWikiPage[]>;
+  /** 이슈 노트 (ISSUE-529) — **변경 이슈에만** 불린다(노트 활동도 updated_at 을 올리므로 기존
+   * 커서가 변경을 공짜로 잡는다). 선택 구현 — 없으면 코멘트 절 없이 간다(구 가짜·구 조립). */
+  listIssueNotes?(projectPath: string, iid: number): Promise<GitLabIssueNote[]>;
 }
 
 // ---- 위키 스탬프 — 내용 해시(FNV-1a 32bit)를 mtime 자리에 쓴다: 결정적·무변 재수집 0 ----
@@ -165,11 +178,18 @@ export async function pullGitLabChanges(
     const mtime = Date.parse(issue.updatedAt);
     if (Number.isNaN(mtime)) throw new GitLabError([`이슈 수정 시각이 날짜가 아니다: ${issueId(issue.iid)}`]);
     if (cursor === null || issue.updatedAt > cursor) cursor = issue.updatedAt;
+    // 노트는 변경 이슈에만 (ISSUE-529) — 무변 항목은 본문도 코멘트도 다시 나르지 않는다.
+    const changed = known.files[issueId(issue.iid)] !== mtime;
+    let md: string | null = null;
+    if (changed) {
+      const notes = client.listIssueNotes === undefined ? [] : await client.listIssueNotes(projectPath, issue.iid);
+      md = sourceIssueMd({ author: issue.author, assignees: issue.assignees, body: issue.descriptionMd }, notes);
+    }
     items.push({
       id: issueId(issue.iid),
       title: issue.title,
       mtime,
-      md: known.files[issueId(issue.iid)] === mtime ? null : issue.descriptionMd ?? "",
+      md,
       confidential: issue.confidential,
     });
   }

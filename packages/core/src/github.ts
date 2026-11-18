@@ -17,7 +17,7 @@
 // 매 수집의 첫 문이 저장소 메타데이터 호출이라, 자격 상실은 **항상 명시 오류**로 선다 — 빈
 // 성공으로 위장될 자리가 구조적으로 없다 (조용한 빈 수집 금지).
 import type { CollectState, VaultFileStat } from "./collect.js";
-import { sourceEntryPath, sourceKnownStats, type SourceReader } from "./sources.js";
+import { sourceEntryPath, sourceIssueMd, sourceKnownStats, type SourceReader } from "./sources.js";
 import { GITHUB_ALLOWED_SCOPES } from "./oauth-scopes.js"; // 잎 — 금고 본체를 번들로 끌고 가지 않는다
 
 export class GitHubError extends Error {
@@ -78,6 +78,17 @@ export interface GitHubIssueEntry {
   updatedAt: string;
   /** 목록 응답에 본문이 동승한다 — 항목별 본문 호출 0 이 이 API 의 값이다. */
   bodyMd: string | null;
+  /** 작성자·담당자 로그인 (ISSUE-529) — 목록 응답 동승분: 추가 호출 0. 구 클라이언트는 부재. */
+  author?: string | null;
+  assignees?: string[];
+}
+
+/** 이슈 코멘트 한 건 (ISSUE-529) — 결의·판정이 코멘트에 사는 운영 꼴의 수집 재료. */
+export interface GitHubIssueComment {
+  author: string | null;
+  /** RFC3339 created_at — 코멘트 절의 시각 표기. */
+  createdAt: string;
+  bodyMd: string;
 }
 
 export interface GitHubIngestClient {
@@ -85,9 +96,24 @@ export interface GitHubIngestClient {
   getRepo(repoFullName: string): Promise<GitHubRepoInfo>;
   /** since 가 null 이면 전량 — PR 행 제외·페이지 소비는 어댑터 몫. since 는 포함 경계일 수 있다. */
   listIssues(repoFullName: string, since: string | null): Promise<GitHubIssueEntry[]>;
+  /** 이슈 코멘트 (ISSUE-529) — **변경 이슈에만** 불린다(코멘트 활동도 updated_at 을 올리므로
+   * 기존 커서가 변경을 공짜로 잡는다). 선택 구현 — 없으면 코멘트 절 없이 간다(구 가짜·구 조립). */
+  listComments?(repoFullName: string, issueNumber: number): Promise<GitHubIssueComment[]>;
 }
 
 const issueId = (number: number): string => `i-${number}`;
+
+// ---- 이슈 → 노트 md 합성 (ISSUE-529) ----
+// 메타데이터는 **위키링크 줄**로 선다: 수집의 위키링크 승격(설계 결정 ⓓ — related-to·fallback·
+// origin wikilink·엔진 0)이 그대로 사람 엣지를 만든다 — 새 와이어·동사·스키마 0. 더 정밀한
+// 동사(작성했다/맡고 있다)는 커스텀 동사 의식(AI 제안 + 사용자 확정)의 몫으로 남긴다.
+// 코멘트 본문은 노트에 실려 추출 재료가 된다 — 「결의·판정이 코멘트에 산다」(모아요 자신의
+// 운영 꼴)가 본문만 먹던 갭의 수리다.
+
+/** 합성 본체는 sources.ts 공용 (ISSUE-529 벤더 확장) — GitLab·Jira 와 한 꼴이다. */
+export function issueNoteMd(issue: GitHubIssueEntry, comments: readonly GitHubIssueComment[]): string {
+  return sourceIssueMd({ author: issue.author, assignees: issue.assignees, body: issue.bodyMd }, comments);
+}
 
 // ---- 커서 증분 (AC1) ----
 
@@ -131,8 +157,10 @@ export async function pullGitHubChanges(
     repo = await client.getRepo(repoFullName);
   } catch (e) {
     if (e instanceof GitHubApiError && (e.status === 401 || e.status === 404 || (e.status === 403 && e.retryAfterMs === undefined))) {
+      // 404 의 가장 흔한 꼴은 「비공개 저장소 + 앱 미설치」다 (ISSUE-501) — 설치 길을 먼저
+      // 가리키고, 소유자 퇴장(워크스페이스 토큰은 연결 소유자를 탄다)은 그다음 안내다.
       throw new GitHubAuthError([
-        `연결 자격이 더는 저장소에 닿지 않습니다 (${e.status}) — 워크스페이스 토큰은 연결 소유자를 탑니다: 소유자가 떠났다면 남은 관리자가 콘솔에서 GitHub 를 다시 연결해 주세요`,
+        `연결 자격이 저장소에 닿지 않습니다 (${e.status}) — 비공개 저장소는 OntoFlow 허브 GitHub 앱이 그 저장소에 설치되어 있어야 보입니다: github.com/apps/ontoflow-hub/installations/new 에서 저장소를 더해 주세요. 설치 뒤에도 계속되면 연결 소유자의 자격이 끊긴 것입니다 — 콘솔에서 GitHub 를 다시 연결해 주세요`,
       ]);
     }
     throw e;
@@ -149,11 +177,19 @@ export async function pullGitHubChanges(
     const mtime = Date.parse(issue.updatedAt);
     if (Number.isNaN(mtime)) throw new GitHubError([`이슈 수정 시각이 날짜가 아니다: ${issueId(issue.number)}`]);
     if (cursor === null || issue.updatedAt > cursor) cursor = issue.updatedAt;
+    // 코멘트는 변경 이슈에만 (ISSUE-529) — 무변 항목은 본문도 코멘트도 다시 나르지 않는다.
+    const changed = known.files[issueId(issue.number)] !== mtime;
+    let md: string | null = null;
+    if (changed) {
+      const comments =
+        client.listComments === undefined ? [] : await client.listComments(repoFullName, issue.number);
+      md = issueNoteMd(issue, comments);
+    }
     items.push({
       id: issueId(issue.number),
       title: issue.title,
       mtime,
-      md: known.files[issueId(issue.number)] === mtime ? null : issue.bodyMd ?? "",
+      md,
       visibility: repo.visibility,
     });
   }

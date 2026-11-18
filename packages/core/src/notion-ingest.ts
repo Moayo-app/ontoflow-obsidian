@@ -7,7 +7,7 @@
 // 라 교차 사용이 꼴부터 막힌다. 투영의 되읽기 0 증명(스펙 AC27)과 쌍대로, 수집 쪽에는 쓰기
 // 연산 자체가 없다.
 import type { CollectState, VaultFileStat } from "./collect.js";
-import { sourceEntryPath, sourceKnownStats, type SourceReader } from "./sources.js";
+import { sourceEntryPath, sourceIssueMd, sourceKnownStats, type SourceReader } from "./sources.js";
 
 export class NotionIngestError extends Error {
   constructor(readonly problems: string[]) {
@@ -55,6 +55,15 @@ export interface NotionPageStat {
   lastEdited: string;
   /** 부모 — DB 행 페이지면 그 DB 가 기계 자리인지 판별(AC3)의 입력이다. */
   parent: { kind: "database"; databaseId: string } | { kind: "other" };
+  /** 작성자 표시 이름 (ISSUE-540) — user id 해석은 어댑터 몫(세션 캐시). 구 클라이언트는 부재. */
+  createdBy?: string | null;
+}
+
+/** 페이지 코멘트 한 건 (ISSUE-540) — rich_text 는 어댑터가 평문으로 눕혀 싣는다. */
+export interface NotionIngestComment {
+  author: string | null;
+  createdAt: string;
+  bodyMd: string;
 }
 
 /** 본문 블록의 수집 꼴 — 어댑터가 rich_text 를 평문으로 눕혀 싣는다 (주석·색은 버린다). */
@@ -73,6 +82,8 @@ export interface NotionIngestClient {
   listPages(): Promise<NotionPageStat[]>;
   getPageBlocks(pageId: string): Promise<NotionIngestBlock[]>;
   databaseTitle(databaseId: string): Promise<string>;
+  /** 페이지 코멘트 (ISSUE-540) — **변경 페이지에만** 불린다. 선택 구현 — 없으면 코멘트 절 없이 간다. */
+  listComments?(pageId: string): Promise<NotionIngestComment[]>;
 }
 
 // ---- 블록 → md 정규화 (AC5 입력 꼴) — 추출 입력으로 충분한 평문 md 를 얻는 보수 변환이다 ----
@@ -154,11 +165,17 @@ export async function pullNotionPages(
     const mtime = Date.parse(stat.lastEdited);
     if (Number.isNaN(mtime)) throw new NotionIngestError([`페이지 수정 시각이 날짜가 아니다: ${stat.id}`]);
     const changed = known[stat.id] !== mtime;
+    // 작성·코멘트 합성 (ISSUE-540) — #529 트래커 꼴 승계: 변경 페이지만, 구 클라이언트는 본문 그대로.
+    let md: string | null = null;
+    if (changed) {
+      const comments = client.listComments === undefined ? [] : await client.listComments(stat.id);
+      md = sourceIssueMd({ author: stat.createdBy, body: notionBlocksToMd(await client.getPageBlocks(stat.id)) }, comments);
+    }
     pages.push({
       id: stat.id,
       title: stat.title,
       mtime,
-      md: changed ? notionBlocksToMd(await client.getPageBlocks(stat.id)) : null,
+      md,
     });
   }
   return { pages };

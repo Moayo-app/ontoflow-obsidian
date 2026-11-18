@@ -188,6 +188,6 @@ export { openAiCompatEngine } from "../../core/src/engine.js";
 export type { EngineFetchLike } from "../../core/src/engine.js";
 export type { Engine } from "../../core/src/hub.js";
 
-export { SENSITIVE_CONSENT_TEXT } from "../../core/src/billing.js";
+export { SENSITIVE_CONSENT_TEXT, SENSITIVE_CONSENT_TEXT_EN } from "../../core/src/billing.js";
 
 export type { MergeProposal } from "../../core/src/normalize.js";

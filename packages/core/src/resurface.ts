@@ -130,7 +130,13 @@ export function findContradictions(store: GraphStore, registry: Registry): Resur
     }
   };
   for (const start of [...next.keys()].sort()) walk(start, start, []);
-  return out.sort((x, y) => x.fingerprint.localeCompare(y.fingerprint));
+  // 지문 중복 제거 (ISSUE-520) — 같은 s·v·o 가 출처 노트별로 여러 행이라, 쌍 스캔(①②)이
+  // 같은 발견을 지문까지 같게 두 번 밀었다(2026-11-17 첫 실물 — 콘솔 모순 목록의 중복 행).
+  // 큐는 지문으로 재노출을 막아 멀쩡했고 화면 목록만 중복이 보였다. 첫 행이 이긴다(행 순서 결정적).
+  const seenFp = new Set<string>();
+  return out
+    .filter((f) => !seenFp.has(f.fingerprint) && (seenFp.add(f.fingerprint), true))
+    .sort((x, y) => x.fingerprint.localeCompare(y.fingerprint));
 }
 
 // ---- 공백 (AC1) ----
@@ -158,15 +164,20 @@ export function findGaps(store: GraphStore): ResurfaceFinding[] {
       }
     }
   }
+  // 순서 = 신호 크기 (ISSUE-520) — 상위 N 자름(리포트·콘솔)의 분모라 순서가 의미를 진다:
+  // 얇은출처 허브(차수 내림차순)가 앞, 섬(이름순)이 뒤. 결정론(AC1)은 그대로다.
+  const hubs: { name: string; d: number }[] = [];
   for (const [name, d] of [...degree.entries()].sort()) {
-    if (d >= GAP_HUB_DEGREE && (notes.get(name)?.size ?? 0) <= 1) {
-      out.push({
-        fingerprint: `공백:얇은출처:${name}`,
-        kind: "gap",
-        summary: `「${name}」 은 연결이 ${d}개인데 출처 노트가 ${notes.get(name)?.size ?? 0}개뿐이다 — 이 개념을 받칠 노트가 비어 있다`,
-        edges: [],
-      });
-    }
+    if (d >= GAP_HUB_DEGREE && (notes.get(name)?.size ?? 0) <= 1) hubs.push({ name, d });
+  }
+  hubs.sort((a, b) => b.d - a.d || a.name.localeCompare(b.name));
+  for (const { name, d } of hubs) {
+    out.push({
+      fingerprint: `공백:얇은출처:${name}`,
+      kind: "gap",
+      summary: `「${name}」 은 연결이 ${d}개인데 출처 노트가 ${notes.get(name)?.size ?? 0}개뿐이다 — 이 개념을 받칠 노트가 비어 있다`,
+      edges: [],
+    });
   }
 
   // ② 고립 섬 — 본 그래프가 충분히 자란 뒤 끊겨 있는 작은 성분.
@@ -198,7 +209,7 @@ export function findGaps(store: GraphStore): ResurfaceFinding[] {
       });
     }
   }
-  return out.sort((x, y) => x.fingerprint.localeCompare(y.fingerprint));
+  return out; // 신호 순서 그대로 (ISSUE-520) — 지문 가나다 정렬이 순위를 지우던 자리
 }
 
 // ---- 첫 색인 하이라이트 (이슈 #89) — 온보딩의 끝을 「이게 네 노트에서 나왔다」로.
@@ -302,6 +313,11 @@ export interface ResurfaceReportInput {
   newlyQueued: number;
 }
 
+/** 목록 상한 (ISSUE-520) — 리포트 한 절의 줄 수: 1,940건 전량 나열이 신호를 묻던 자리. */
+export const REPORT_LIST_MAX = 20;
+/** 콘솔 열람 응답의 섹션별 상한 (ISSUE-520) — 전량(실측 150KB)을 매 열람에 싣지 않는다. */
+export const RESURFACE_VIEW_MAX = 50;
+
 /** 할 말이 없으면 null — 빈 리포트를 만들지 않는다 (AC4). */
 export function renderResurfaceReport(input: ResurfaceReportInput): string | null {
   const { delta } = input;
@@ -323,13 +339,19 @@ export function renderResurfaceReport(input: ResurfaceReportInput): string | nul
     lines.push("");
     lines.push(`## 모순 — 확인 대기 ${input.contradictions.length}`); // 콘솔 리포트 헤딩과 한 단어 (ISSUE-368)
     lines.push("");
-    for (const f of input.contradictions) lines.push(`- ${f.summary}`);
+    for (const f of input.contradictions.slice(0, REPORT_LIST_MAX)) lines.push(`- ${f.summary}`);
+    if (input.contradictions.length > REPORT_LIST_MAX) {
+      lines.push(`- … 외 ${input.contradictions.length - REPORT_LIST_MAX}건`);
+    }
   }
   if (input.gaps.length > 0) {
     lines.push("");
     lines.push(`## 비어 있는 자리 ${input.gaps.length}`);
     lines.push("");
-    for (const f of input.gaps) lines.push(`- ${f.summary}`);
+    for (const f of input.gaps.slice(0, REPORT_LIST_MAX)) lines.push(`- ${f.summary}`);
+    if (input.gaps.length > REPORT_LIST_MAX) {
+      lines.push(`- … 외 ${input.gaps.length - REPORT_LIST_MAX}건`);
+    }
   }
   lines.push("");
   lines.push(

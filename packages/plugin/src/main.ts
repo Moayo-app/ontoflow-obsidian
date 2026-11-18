@@ -783,6 +783,8 @@ class OnboardingModal extends Modal {
     );
 
     contentEl.createEl("p", { text: view.consentText });
+    // en 병기 (ISSUE-484) — ko 문안이 법적 정본으로 항상 서고, en 셸만 참고 번역이 밑에 선다.
+    if (P.consentTextEn !== "") contentEl.createEl("p", { text: P.consentTextEn, cls: "setting-item-description" });
     new Setting(contentEl).setName(fmt(P.stepConsent, { state: view.consentGranted ? "✓" : P.notYetSuffix })).addButton((b) =>
       b
         .setButtonText(P.consentBtn)

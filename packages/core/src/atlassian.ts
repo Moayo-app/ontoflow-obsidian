@@ -17,7 +17,7 @@
 // ⚠️ 레이트리밋 (AC3) — Confluence 풀은 **앱 전역**이다: 429 재시도는 남의 워크스페이스
 // 예산을 태우는 일이라 어댑터에 자동 재시도가 없고, 코어는 중단 + 재개 커서로 돌려준다.
 import type { CollectState, VaultFileStat } from "./collect.js";
-import { sourceEntryPath, sourceKnownStats, type SourceReader } from "./sources.js";
+import { sourceEntryPath, sourceIssueMd, sourceKnownStats, type SourceReader } from "./sources.js";
 import { ATLASSIAN_ALLOWED_SCOPES } from "./oauth-scopes.js"; // 잎 — 금고 본체를 번들로 끌고 가지 않는다
 
 export class AtlassianError extends Error {
@@ -72,6 +72,17 @@ export interface JiraIssueEntry {
   updatedAt: string;
   /** ADF JSON 문자열 — md 변환은 코어(adfToMd) 몫이다. */
   descriptionAdf: string | null;
+  /** 작성·담당 displayName (ISSUE-529) — fields 동승분: 추가 호출 0. 구 클라이언트는 부재. */
+  reporter?: string | null;
+  /** Jira 담당자는 단수다 — 합성 경계(sourceIssueMd)의 배열에 코어가 싸 넣는다. */
+  assignee?: string | null;
+}
+
+/** 이슈 코멘트 한 건 (ISSUE-529) — 본문은 ADF 로 오고 md 변환은 코어(adfToMd) 몫이다. */
+export interface JiraIssueComment {
+  author: string | null;
+  createdAt: string;
+  bodyAdf: string | null;
 }
 
 export interface ConfluenceSpaceInfo {
@@ -98,6 +109,9 @@ export interface AtlassianIngestClient {
   getSpace(spaceKey: string): Promise<ConfluenceSpaceInfo | null>;
   /** 페이지 한 배치 — 커서 페이징을 코어가 돌려야 429 중단·재개가 선다 (AC3). */
   listPageBatch(spaceId: string, cursor: string | null): Promise<{ pages: ConfluencePageEntry[]; nextCursor: string | null }>;
+  /** 이슈 코멘트 (ISSUE-529) — **변경 이슈에만** 불린다(코멘트 활동도 updated 를 올리므로 기존
+   * 커서가 변경을 공짜로 잡는다). 선택 구현 — 없으면 코멘트 절 없이 간다(구 가짜·구 조립). */
+  listJiraComments?(issueKey: string): Promise<JiraIssueComment[]>;
 }
 
 // ---- ADF → md — 결정적 변환: 같은 입력은 같은 출력이다 (스탬프의 전제) ----
@@ -226,11 +240,27 @@ export async function pullJiraChanges(client: AtlassianIngestClient, projectKey:
     const mtime = Date.parse(issue.updatedAt);
     if (Number.isNaN(mtime)) throw new AtlassianError([`이슈 수정 시각이 날짜가 아니다: ${jiraId(issue.key)}`]);
     if (cursor === null || issue.updatedAt > cursor) cursor = issue.updatedAt;
+    // 코멘트는 변경 이슈에만 (ISSUE-529) — 무변 항목은 본문도 코멘트도 다시 나르지 않는다.
+    const changed = known.files[jiraId(issue.key)] !== mtime;
+    let md: string | null = null;
+    if (changed) {
+      let comments: JiraIssueComment[];
+      try {
+        comments = client.listJiraComments === undefined ? [] : await client.listJiraComments(issue.key);
+      } catch (e) {
+        if (isAuthLoss(e)) throw authError(e);
+        throw e;
+      }
+      md = sourceIssueMd(
+        { author: issue.reporter, assignees: issue.assignee == null ? [] : [issue.assignee], body: adfToMd(issue.descriptionAdf) },
+        comments.map((c) => ({ author: c.author, createdAt: c.createdAt, bodyMd: adfToMd(c.bodyAdf) })),
+      );
+    }
     items.push({
       id: jiraId(issue.key),
       title: issue.summary,
       mtime,
-      md: known.files[jiraId(issue.key)] === mtime ? null : adfToMd(issue.descriptionAdf),
+      md,
     });
   }
   return { cursor, unchanged: false, items };

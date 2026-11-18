@@ -26,21 +26,12 @@ Notes outside Obsidian (plain Markdown folders, Logseq, Bear, OneNote, Evernote,
 
 ## Install
 
-Community-plugin listing is pending. Until then, install by hand — it is only two files.
+OntoFlow is listed in the community-plugin catalog — search for it and install.
 
-1. Download `main.js` and `manifest.json` from the [releases](https://github.com/Moayo-app/OntoFlow/releases).
-2. Create `.obsidian/plugins/ontoflow/` inside your vault and put both files there.
+1. Obsidian → Settings → Community plugins → **Browse**, search for **OntoFlow**, install, and enable it. (Manual install also works — put `main.js` and `manifest.json` from the [releases](https://github.com/Moayo-app/OntoFlow/releases) into `.obsidian/plugins/ontoflow/` inside your vault.)
+2. Connect the hub — in the [hub console](https://hub.ontoflow.app/console) under **Account**, issue an **API key** (`ofk_…` — shown only once) and paste it into the plugin settings along with the hub address (`https://hub.ontoflow.app`). Keys do not expire; if you lose one, revoke it in the console and issue a new one.
 
-   ```
-   <your vault>/.obsidian/plugins/ontoflow/
-   ├── main.js
-   └── manifest.json
-   ```
-
-3. Obsidian → Settings → Community plugins → **Reload** installed plugins → enable **OntoFlow**.
-4. Connect the hub — in the [hub console](https://hub.ontoflow.app/console) under **Account**, issue an **API key** (`ofk_…` — shown only once) and paste it into the plugin settings along with the hub address (`https://hub.ontoflow.app`). Keys do not expire; if you lose one, revoke it in the console and issue a new one.
-
-The minimum Obsidian version is 1.5.0. Desktop and mobile both work — importing folders outside the vault (plain Markdown, Logseq, synced folders) and Bear need filesystem access and are desktop-only; on mobile those items are announced explicitly rather than silently missing.
+The minimum Obsidian version is 1.8.7. Desktop and mobile both work — importing folders outside the vault (plain Markdown, Logseq, synced folders) and Bear need filesystem access and are desktop-only; on mobile those items are announced explicitly rather than silently missing.
 
 ## Network & privacy notice
 
@@ -55,7 +46,7 @@ After you connect, it talks to these places only:
 | Your own PostgreSQL (via the hub) | Your graph database | When you choose `pg` as your database |
 
 - **Lives only in your place**: the hub API key and BYO API key exist only in this plugin's settings store (`data.json`) and flow only as call headers — never in note content, logs, or error messages.
-- **External source connections** (OneNote, Evernote, Google Drive, Dropbox) finish their OAuth in the hub console — tokens go straight to the vault-side credential store and **this plugin never sees them**. The settings-tab buttons just open that page in your browser.
+- **External source connections** (OneNote, Evernote, Google Drive, Dropbox) finish their OAuth in the hub console — tokens go straight to the hub's encrypted credential store and **this plugin never sees them**. The settings-tab buttons just open that page in your browser.
 - **Account**: ontology extraction (indexing and import) needs a hub account — a free plan exists with no time limit. What works without an account is exactly the line below.
 - **Payment**: extraction beyond the free plan's monthly allowance needs a paid plan. Prices live on the plans page at [ontoflow.app](https://ontoflow.app) — there is no payment inside this plugin.
 - **What works without the hub**: browsing your database, JSON-LD/GraphML export, the weekly report (insight verdicts), and local MCP are all local — no network needed. Export is local and free — the door out is always open.

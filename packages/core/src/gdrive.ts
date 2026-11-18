@@ -6,7 +6,7 @@
 // 쓰기 연산 자체가 없다 (AC2 의 구조면). drive.readonly 는 Google restricted scope —
 // CASA 연례 심사가 영구 돌봄 비용이다 (moayo-hq#279 기록).
 import type { CollectState, VaultFileStat } from "./collect.js";
-import { sourceEntryPath, sourceKnownStats, type SourceReader } from "./sources.js";
+import { sourceEntryPath, sourceIssueMd, sourceKnownStats, type SourceReader } from "./sources.js";
 import { GDRIVE_ALLOWED_SCOPES } from "./oauth-scopes.js"; // 잎 — 금고 본체를 번들로 끌고 가지 않는다
 
 export class GDriveError extends Error {
@@ -55,6 +55,15 @@ export interface DriveEntry {
   mimeType: string;
   /** RFC3339 — 파일만 든다 (폴더는 선별에 안 쓴다). */
   modifiedTime?: string;
+  /** 소유자 표시 이름 (ISSUE-540) — owners[0].displayName: 목록 fields 동승분. 구 클라이언트는 부재. */
+  owner?: string | null;
+}
+
+/** 파일 코멘트 한 건 (ISSUE-540) — Docs 문서 코멘트가 지식 재료다 (drive.readonly 안). */
+export interface DriveComment {
+  author: string | null;
+  createdAt: string;
+  bodyMd: string;
 }
 
 export interface DriveChangesPage {
@@ -75,6 +84,8 @@ export interface GDriveIngestClient {
   getStartPageToken(): Promise<string>;
   /** 커서 이후 변경 페이지 — 계정 단위 유무 판정에 쓴다. */
   listChanges(pageToken: string): Promise<DriveChangesPage>;
+  /** 파일 코멘트 (ISSUE-540) — **변경 파일에만** 불린다. 선택 구현 — 없으면 코멘트 절 없이 간다. */
+  listComments?(fileId: string): Promise<DriveComment[]>;
 }
 
 // ---- 꼴 판별 — 문서만 들어온다 (AC3) ----
@@ -179,11 +190,18 @@ export async function pullGDriveChanges(
       const mtime = Date.parse(entry.modifiedTime ?? "");
       if (Number.isNaN(mtime)) throw new GDriveError([`파일 수정 시각이 날짜가 아니다: ${entry.id}`]);
       const changed = known.files[entry.id] !== mtime;
+      // 작성·코멘트 합성 (ISSUE-540) — #529 트래커 꼴 승계: 변경 파일만, 구 클라이언트는 본문 그대로.
+      let md: string | null = null;
+      if (changed) {
+        const body = kind === "doc" ? await client.exportDoc(entry.id) : await client.downloadText(entry.id);
+        const comments = client.listComments === undefined ? [] : await client.listComments(entry.id);
+        md = sourceIssueMd({ author: entry.owner, body }, comments);
+      }
       files.push({
         id: entry.id,
         title: entry.name.replace(TEXT_EXT, ""),
         mtime,
-        md: !changed ? null : kind === "doc" ? await client.exportDoc(entry.id) : await client.downloadText(entry.id),
+        md,
       });
     }
   }
